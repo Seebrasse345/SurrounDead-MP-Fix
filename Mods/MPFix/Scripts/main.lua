@@ -1,8 +1,8 @@
--- MPFix v4.4 - Server spawn fix + Enhanced client input fix
+-- MPFix v4.5 - Server spawn fix + Enhanced client input fix
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.4 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.5 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -87,6 +87,11 @@ local function GetWorldSafe()
         end
     end
     local world = nil
+    pcall(function() world = FindFirstOf("World") end)
+    if IsValidObject(world) then
+        return world
+    end
+    local world = nil
     pcall(function() world = UEHelpers.GetWorld() end)
     if IsValidObject(world) then
         return world
@@ -96,47 +101,74 @@ end
 
 local function GetNetMode()
     local world = GetWorldSafe()
-    if IsValidObject(world) and world.GetNetMode then
+    if IsValidObject(world) then
         local result = nil
-        pcall(function() result = world:GetNetMode() end)
+        pcall(function() result = world.NetMode end)
+        if result ~= nil then
+            return result
+        end
+        pcall(function()
+            if world.GetNetMode then
+                result = world:GetNetMode()
+            end
+        end)
         if result ~= nil then
             return result
         end
     end
-    local pc = GetLocalPlayerController()
-    if IsValidObject(pc) and pc.GetNetMode then
-        local result = nil
-        pcall(function() result = pc:GetNetMode() end)
-        if result ~= nil then
-            return result
+
+    local ksl = nil
+    pcall(function() ksl = UEHelpers.GetKismetSystemLibrary() end)
+    if IsValidObject(ksl) then
+        local ctx = GetWorldSafe() or GetLocalPlayerController()
+        if IsValidObject(ctx) then
+            local result = nil
+            pcall(function()
+                if ksl.GetNetMode then
+                    result = ksl:GetNetMode(ctx)
+                end
+            end)
+            if result ~= nil then
+                return result
+            end
         end
+    end
+
+    return nil
+end
+
+local function GetNetDriver()
+    local world = GetWorldSafe()
+    if IsValidObject(world) then
+        local nd = nil
+        pcall(function() nd = world.NetDriver end)
+        if IsValidObject(nd) then return nd end
+        pcall(function() nd = world.GameNetDriver end)
+        if IsValidObject(nd) then return nd end
     end
     return nil
 end
 
 local function IsServer()
+    local netDriver = GetNetDriver()
+    if IsValidObject(netDriver) then
+        local hasServerConnection = false
+        pcall(function()
+            hasServerConnection = netDriver.ServerConnection ~= nil
+        end)
+        return not hasServerConnection
+    end
+
+    local netMode = GetNetMode()
+    if netMode == 3 then return false end
+    if netMode == 0 or netMode == 1 or netMode == 2 then return true end
+
     local pc = GetLocalPlayerController()
     if IsValidObject(pc) and pc.HasAuthority then
         local hasAuthority = nil
         pcall(function() hasAuthority = pc:HasAuthority() end)
-        if hasAuthority == true then
-            return true
-        elseif hasAuthority == false then
-            return false
-        end
-    end
-
-    local gm = nil
-    pcall(function() gm = FindFirstOf("GameModeBase") end)
-    if IsValidObject(gm) then
-        return true
-    end
-
-    local netMode = GetNetMode()
-    if netMode == 1 or netMode == 2 or netMode == 0 then
-        return true
-    elseif netMode == 3 then
-        return false
+        if hasAuthority == true then return true end
+        if hasAuthority == false then return false end
     end
 
     return false
@@ -155,13 +187,9 @@ local function IsInGame()
         return true
     end
 
-    local world = GetWorldSafe()
-    if IsValidObject(world) and world.GetNetDriver then
-        local netDriver = nil
-        pcall(function() netDriver = world:GetNetDriver() end)
-        if IsValidObject(netDriver) then
-            return true
-        end
+    local netDriver = GetNetDriver()
+    if IsValidObject(netDriver) then
+        return true
     end
 
     return false
@@ -233,7 +261,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.4 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.5 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -268,7 +296,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.4 enhanced)...")
+    Log("Fixing local input (v4.5 enhanced)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -958,7 +986,7 @@ end)
 
 ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v4.4")
+    Log("Initializing MPFix v4.5")
     Log("NetMode: " .. tostring(GetNetMode()))
     Log("IsServer: " .. tostring(IsServer()))
     Log("========================================")
@@ -978,5 +1006,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.4 Loaded")
+print("[MPFix] v4.5 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost | F6 = manual fix | ESC = pause menu")
