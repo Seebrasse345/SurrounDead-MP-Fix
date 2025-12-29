@@ -1,8 +1,8 @@
--- MPFix v4.9 - Server spawn fix + Enhanced client input fix (movement fix)
+-- MPFix v4.10 - Server spawn fix + Enhanced client input fix (movement fix)
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.9 - Movement & Pause Menu Fix")
+print("[MPFix] Loading v4.10 - Movement & Pause Menu Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -252,7 +252,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.9 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.10 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -287,7 +287,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.9 movement fix)...")
+    Log("Fixing local input (v4.10 movement fix)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -450,9 +450,9 @@ local function FixLocalInput()
     end)
 end
 
--- Escape key handler as backup for pause menu (v4.9 Enhanced)
+-- Escape key handler as backup for pause menu (v4.10 Enhanced)
 local function OnEscapeKey()
-    Log("Escape pressed - trying pause menu (v4.9)")
+    Log("Escape pressed - trying pause menu (v4.10)")
     pcall(function()
         local pc = GetLocalPlayerController()
         if not IsValidObject(pc) then
@@ -1191,49 +1191,51 @@ RegisterConsoleCommandHandler("mpwidgets", function()
 end)
 
 -- ============================================
--- INIT
+-- INIT (v4.10 - Extra safe init for main menu)
 -- ============================================
 
 ExecuteWithDelay(Config.InitialDelay, function()
-    SafeCall("Init", function()
-        Log("========================================")
-        Log("Initializing MPFix v4.9")
+    -- Don't call ANY UE functions during init - just start the loop
+    -- This prevents crashes when mod loads at main menu
+    print("[MPFix] ========================================")
+    print("[MPFix] Initializing MPFix v4.10")
+    print("[MPFix] Starting periodic check (waiting for game session)")
+    print("[MPFix] ========================================")
 
-        -- Safe info logging - wrapped to prevent crash
-        local netMode = nil
-        local isServer = nil
-        SafeCall("GetNetMode", function() netMode = GetNetMode() end)
-        SafeCall("IsServer", function() isServer = IsServer() end)
+    LoopAsync(Config.CheckInterval, function()
+        State.CheckCount = State.CheckCount + 1
 
-        Log("NetMode: " .. tostring(netMode ~= nil and netMode or "unknown"))
-        Log("IsServer: " .. tostring(isServer ~= nil and isServer or "unknown"))
-        Log("========================================")
-
-        Log("Starting periodic check (every " .. tostring(Config.CheckInterval) .. "ms)")
-        LoopAsync(Config.CheckInterval, function()
-            State.CheckCount = State.CheckCount + 1
-
-            -- Warmup period - skip first few checks to let game stabilize
-            if State.CheckCount <= Config.WarmupChecks then
-                Log("Warmup check " .. tostring(State.CheckCount) .. "/" .. tostring(Config.WarmupChecks))
-                return false
-            end
-
-            -- Safe periodic check with error handling
-            local isServer = nil
-            SafeCall("PeriodicIsServer", function() isServer = IsServer() end)
-
-            if isServer == true then
-                SafeCall("ServerCheck", CheckForPawnlessPlayers)
-            elseif isServer == false then
-                SafeCall("ClientCheck", CheckClientInput)
-            end
+        -- Warmup period - skip first few checks
+        if State.CheckCount <= Config.WarmupChecks then
             return false
+        end
+
+        -- Only proceed if we detect a game session (very safe check)
+        local inGame = false
+        pcall(function()
+            local gs = FindFirstOf("GameStateBase")
+            if gs then inGame = true end
         end)
 
-        State.Initialized = true
+        if not inGame then
+            -- Not in game yet, silently wait
+            return false
+        end
+
+        -- Now safe to do full checks
+        local isServer = nil
+        SafeCall("PeriodicIsServer", function() isServer = IsServer() end)
+
+        if isServer == true then
+            SafeCall("ServerCheck", CheckForPawnlessPlayers)
+        elseif isServer == false then
+            SafeCall("ClientCheck", CheckClientInput)
+        end
+        return false
     end)
+
+    State.Initialized = true
 end)
 
-print("[MPFix] v4.9 Loaded")
+print("[MPFix] v4.10 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost, mpwidgets | F6 = manual fix | ESC = pause menu")
