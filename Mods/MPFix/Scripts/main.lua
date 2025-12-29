@@ -1,8 +1,8 @@
--- MPFix v4.11 - Server spawn fix + Enhanced client input fix (movement fix)
+-- MPFix v4.12 - Server spawn fix + Enhanced client input fix (movement fix)
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.11 - Movement & Pause Menu Fix")
+print("[MPFix] Loading v4.12 - Movement & Pause Menu Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -11,7 +11,7 @@ local Config = {
     UndergroundZ = -500,
     SpawnOffsetX = 300,
     SpawnOffsetZ = 100,
-    SpawnRetryInterval = 8000,  -- v4.11: longer wait to not fight game logic
+    SpawnRetryInterval = 8000,  -- v4.12: longer wait to not fight game logic
     WarmupChecks = 2,  -- Skip first N checks
 }
 
@@ -252,7 +252,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.11 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.12 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -287,7 +287,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.11 movement fix)...")
+    Log("Fixing local input (v4.12 movement fix)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -450,9 +450,9 @@ local function FixLocalInput()
     end)
 end
 
--- Escape key handler as backup for pause menu (v4.11 Enhanced)
+-- Escape key handler as backup for pause menu (v4.12 Enhanced)
 local function OnEscapeKey()
-    Log("Escape pressed - trying pause menu (v4.11)")
+    Log("Escape pressed - trying pause menu (v4.12)")
     pcall(function()
         local pc = GetLocalPlayerController()
         if not IsValidObject(pc) then
@@ -724,68 +724,91 @@ end
 local function SpawnPawnForController(pc)
     if not IsValidObject(pc) then return false end
 
-    Log("Requesting spawn for remote client...")
+    local pcKey = tostring(pc:GetAddress())
 
-    -- v4.11: Only use RestartPlayer - let the game handle spawning
-    -- Don't try to possess characters ourselves - it conflicts with game logic
+    -- v4.12: Prevent re-processing same controller rapidly
+    if State.LastSpawnAttempt[pcKey .. "_processing"] then
+        return false
+    end
+    State.LastSpawnAttempt[pcKey .. "_processing"] = true
+
+    Log("Spawning pawn for remote client...")
+
+    -- Step 1: Try RestartPlayer first
     pcall(function()
         local gm = FindFirstOf("GameModeBase")
         if IsValidObject(gm) and gm.RestartPlayer then
-            Log("Calling RestartPlayer...")
+            Log("Trying RestartPlayer...")
             gm:RestartPlayer(pc)
-        elseif pc.ServerRestartPlayer then
-            Log("Calling ServerRestartPlayer...")
-            pc:ServerRestartPlayer()
         end
     end)
 
-    -- Check after delay if spawn worked
-    ExecuteWithDelay(1500, function()
-        if not IsValidObject(pc) then return end
+    -- Step 2: After 2s, check if worked. If not, find unpossessed character
+    ExecuteWithDelay(2000, function()
+        if not IsValidObject(pc) then
+            State.LastSpawnAttempt[pcKey .. "_processing"] = nil
+            return
+        end
+
         local pawn = nil
         pcall(function() pawn = pc:GetPawn() end)
+
         if IsValidObject(pawn) then
-            Log("RestartPlayer succeeded - setting up pawn")
+            Log("RestartPlayer created pawn!")
             SetupPossessedPawn(pc, pawn)
-        else
-            Log("RestartPlayer did not create pawn yet")
+            State.LastSpawnAttempt[pcKey .. "_processing"] = nil
+            return
         end
+
+        -- RestartPlayer failed - find unpossessed character
+        Log("RestartPlayer failed - looking for unpossessed character...")
+        local spawnLoc = GetValidSpawnLocation()
+
+        pcall(function()
+            local chars = FindAllOf("BP_PlayerCharacter_C")
+            if not chars then return end
+
+            -- Get host pawn to avoid grabbing it
+            local hostPawn = nil
+            pcall(function()
+                local pcs = FindAllOf("PlayerController")
+                if pcs then
+                    for _, p in ipairs(pcs) do
+                        if IsValidObject(p) and p:IsLocalController() then
+                            hostPawn = p:GetPawn()
+                            break
+                        end
+                    end
+                end
+            end)
+
+            for _, char in ipairs(chars) do
+                if IsValidObject(char) and char ~= hostPawn then
+                    local hasController = false
+                    pcall(function() hasController = IsValidObject(char.Controller) end)
+
+                    if not hasController then
+                        Log("Found unpossessed character - possessing...")
+                        pcall(function() char:K2_SetActorLocation(spawnLoc, false, {}, true) end)
+                        pcall(function() pc:Possess(char) end)
+                        -- Minimal setup
+                        pcall(function() if char.SetOwner then char:SetOwner(pc) end end)
+                        pcall(function() if char.ForceNetUpdate then char:ForceNetUpdate() end end)
+                        pcall(function() if pc.AcknowledgePossession then pc:AcknowledgePossession(char) end end)
+                        Log("Possession complete")
+                        State.LastSpawnAttempt[pcKey .. "_processing"] = nil
+                        return
+                    end
+                end
+            end
+        end)
+
+        Log("Could not find character to possess")
+        State.LastSpawnAttempt[pcKey .. "_processing"] = nil
     end)
 
     return true
 end
-
-local function TeleportUndergroundPawn(pawn)
-    if not IsValidObject(pawn) then return end
-    local spawnLoc = GetValidSpawnLocation()
-    pcall(function()
-        Log("Teleporting underground pawn to Z=" .. tostring(spawnLoc.Z))
-        pawn:K2_SetActorLocation(spawnLoc, false, {}, true)
-    end)
-end
-
-local function CheckForPawnlessPlayers()
-    local isServer = IsServer()
-    if isServer ~= true or not IsInGame() then return end
-
-    local pcs = nil
-    local ok = pcall(function() pcs = FindAllOf("PlayerController") end)
-    if not ok or not pcs then return end
-
-    local count = #pcs
-
-    if State.ControllerCount == -1 then
-        State.ControllerCount = count
-        Log("Initial controller count: " .. tostring(count))
-        return
-    end
-
-    if count > State.ControllerCount then
-        Log("New player joined! " .. tostring(State.ControllerCount) .. " -> " .. tostring(count))
-        State.ProcessedControllers = {}
-        State.LastSpawnAttempt = {}
-    end
-    State.ControllerCount = count
 
     for i, pc in ipairs(pcs) do
         if IsValidObject(pc) then
@@ -1152,14 +1175,14 @@ RegisterConsoleCommandHandler("mpwidgets", function()
 end)
 
 -- ============================================
--- INIT (v4.11 - Extra safe init for main menu)
+-- INIT (v4.12 - Extra safe init for main menu)
 -- ============================================
 
 ExecuteWithDelay(Config.InitialDelay, function()
     -- Don't call ANY UE functions during init - just start the loop
     -- This prevents crashes when mod loads at main menu
     print("[MPFix] ========================================")
-    print("[MPFix] Initializing MPFix v4.11")
+    print("[MPFix] Initializing MPFix v4.12")
     print("[MPFix] Starting periodic check (waiting for game session)")
     print("[MPFix] ========================================")
 
@@ -1198,5 +1221,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.11 Loaded")
+print("[MPFix] v4.12 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost, mpwidgets | F6 = manual fix | ESC = pause menu")
