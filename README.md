@@ -2,7 +2,7 @@
 
 Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Current Version: v4.2
+## Current Version: v4.3
 
 ## The Problem
 
@@ -35,7 +35,7 @@ Two-component system:
 ```
 1. Detect when local controller gets a pawn
 2. Run FixLocalInput() to enable controls
-3. Set input mode to GameAndUI (allows escape menu)
+3. Set input mode to GameOnly (ESC fallback for menu)
 ```
 
 ### SetupPossessedPawn() - What it does
@@ -156,7 +156,7 @@ SurrounDead/
       Mods/
         MPFix/
           Scripts/
-            main.lua          # Main fix mod (v4.2)
+            main.lua          # Main fix mod (v4.3)
         BPModLoaderMod/       # Loads .pak mods
         shared/               # Lua libraries
         mods.txt              # Mod enable list
@@ -187,6 +187,12 @@ stat net        # UE network stats
 ```
 
 ## Version History
+
+### v4.3
+- Safer keybind registration (no hard failure if Keybinds loads late)
+- Force pawn visibility/relevance for host and other clients
+- Input fix prefers GameOnly + pushes InputComponent + calls pawn Restart
+- Guarded Enhanced Input subsystem lookup
 
 ### v4.2
 - Enhanced client input recovery (movement component + Enhanced Input mapping)

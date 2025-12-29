@@ -1,8 +1,8 @@
--- MPFix v4.2 - Server spawn fix + Enhanced client input fix
+-- MPFix v4.3 - Server spawn fix + Enhanced client input fix
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.2 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.3 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -38,6 +38,20 @@ local function IsValidObject(obj)
         return obj:IsValid()
     end)
     return ok and result
+end
+
+local function TryRegisterKeyBinds(onF6, onEsc)
+    if not RegisterKeyBind or not Key then
+        return false
+    end
+    if not Key.F6 or not Key.ESCAPE then
+        return false
+    end
+
+    RegisterKeyBind(Key.F6, onF6)
+    RegisterKeyBind(Key.ESCAPE, onEsc)
+    Log("Keybinds registered (F6, ESC)")
+    return true
 end
 
 local function GetNetMode()
@@ -138,7 +152,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.2 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.3 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -146,10 +160,13 @@ local function SetupEnhancedInput(pc, pawn)
     pcall(function()
         local localPlayer = nil
         pcall(function() localPlayer = pc:GetLocalPlayer() end)
-        if localPlayer then
+        if IsValidObject(localPlayer) then
             local subsystem = nil
             pcall(function()
-                subsystem = localPlayer:GetSubsystem(StaticFindObject("/Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem"))
+                local subsystemClass = StaticFindObject("/Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem")
+                if subsystemClass and IsValidObject(subsystemClass) then
+                    subsystem = localPlayer:GetSubsystem(subsystemClass)
+                end
             end)
             if IsValidObject(subsystem) then
                 Log("Found Enhanced Input Subsystem")
@@ -170,7 +187,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.2 enhanced)...")
+    Log("Fixing local input (v4.3 enhanced)...")
 
     pcall(function()
         local pcs = FindAllOf("PlayerController")
@@ -199,9 +216,12 @@ local function FixLocalInput()
                             if pc.SetIgnoreLookInput then pc:SetIgnoreLookInput(false) end
                         end)
 
-                        -- 3. Set input mode for game AND UI (allows escape menu)
+                        -- 3. Set input mode to game only (helps movement)
                         pcall(function()
-                            if pc.SetInputModeGameAndUI then
+                            if pc.SetInputModeGameOnly then
+                                pc:SetInputModeGameOnly()
+                                Log("Set InputMode to GameOnly")
+                            elseif pc.SetInputModeGameAndUI then
                                 pc:SetInputModeGameAndUI(nil, false, false)
                                 Log("Set InputMode to GameAndUI")
                             end
@@ -261,6 +281,13 @@ local function FixLocalInput()
                                 end
                             end)
 
+                            pcall(function()
+                                if pawn.Restart then
+                                    pawn:Restart()
+                                    Log("Called pawn Restart")
+                                end
+                            end)
+
                             -- Force view target
                             pcall(function()
                                 if pc.SetViewTarget then
@@ -274,6 +301,13 @@ local function FixLocalInput()
                             end)
                             pcall(function()
                                 if pawn.OnRep_PlayerState then pawn:OnRep_PlayerState() end
+                            end)
+
+                            pcall(function()
+                                if pawn.InputComponent and pc.PushInputComponent then
+                                    pc:PushInputComponent(pawn.InputComponent)
+                                    Log("Pushed pawn InputComponent")
+                                end
                             end)
                         end
 
@@ -300,7 +334,7 @@ local function FixLocalInput()
 end
 
 -- Escape key handler as backup for pause menu
-RegisterKeyBind(Key.ESCAPE, function()
+local function OnEscapeKey()
     Log("Escape pressed - trying pause menu")
     pcall(function()
         local pc = nil
@@ -337,7 +371,7 @@ RegisterKeyBind(Key.ESCAPE, function()
             end)
         end
     end)
-end)
+end
 
 -- ============================================
 -- SERVER-SIDE SPAWN FIX
@@ -362,6 +396,29 @@ local function SetupPossessedPawn(pc, pawn)
     end)
     pcall(function() if pawn.ForceNetUpdate then pawn:ForceNetUpdate() end end)
     pcall(function() if pawn.SetAutonomousProxy then pawn:SetAutonomousProxy(true) end end)
+
+    pcall(function()
+        if pawn.SetActorHiddenInGame then pawn:SetActorHiddenInGame(false) end
+        if pawn.SetHidden then pawn:SetHidden(false) end
+        if pawn.bHidden ~= nil then pawn.bHidden = false end
+    end)
+
+    pcall(function()
+        if pawn.bOnlyRelevantToOwner ~= nil then pawn.bOnlyRelevantToOwner = false end
+        if pawn.bAlwaysRelevant ~= nil then pawn.bAlwaysRelevant = true end
+    end)
+
+    pcall(function()
+        if pawn.SetNetDormancy then pawn:SetNetDormancy(0) end
+        if pawn.FlushNetDormancy then pawn:FlushNetDormancy() end
+    end)
+
+    pcall(function()
+        local mesh = pawn.Mesh
+        if mesh and mesh.SetVisibility then
+            mesh:SetVisibility(true, true)
+        end
+    end)
 
     pcall(function()
         local movement = pawn.CharacterMovement
@@ -483,6 +540,13 @@ local function CheckForPawnlessPlayers()
                     end
                 else
                     pcall(function()
+                        if pc.Possess and (not IsValidObject(pawn.Controller) or pawn.Controller ~= pc) then
+                            Log("Re-possessing pawn for controller")
+                            pc:Possess(pawn)
+                        end
+                    end)
+
+                    pcall(function()
                         local loc = pawn:K2_GetActorLocation()
                         if loc and loc.Z < Config.UndergroundZ then
                             TeleportUndergroundPawn(pawn)
@@ -529,14 +593,31 @@ end
 -- COMMANDS
 -- ============================================
 
-RegisterKeyBind(Key.F6, function()
+local function OnF6Key()
     Log("F6 pressed")
     State.ProcessedControllers = {}
     if IsServer() then
         SafeCall("F6_Server", CheckForPawnlessPlayers)
     end
     SafeCall("F6_Input", FixLocalInput)
-end)
+end
+
+local function RegisterKeyBindsWithRetry()
+    if TryRegisterKeyBinds(OnF6Key, OnEscapeKey) then
+        return
+    end
+    if ExecuteWithDelay then
+        ExecuteWithDelay(2000, function()
+            if not TryRegisterKeyBinds(OnF6Key, OnEscapeKey) then
+                Log("Keybinds unavailable; use console commands (mpfix/mpinput)")
+            end
+        end)
+    else
+        Log("Keybinds unavailable; use console commands (mpfix/mpinput)")
+    end
+end
+
+RegisterKeyBindsWithRetry()
 
 RegisterConsoleCommandHandler("mpfix", function()
     Log("mpfix command")
@@ -723,7 +804,7 @@ end)
 
 ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v4.2")
+    Log("Initializing MPFix v4.3")
     Log("NetMode: " .. tostring(GetNetMode()))
     Log("IsServer: " .. tostring(IsServer()))
     Log("========================================")
@@ -743,5 +824,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.2 Loaded")
+print("[MPFix] v4.3 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, tphost | F6 = manual fix | ESC = pause menu")
