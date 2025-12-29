@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
 echo ==========================================
 echo  SurrounDead MP Fix Installer
@@ -11,27 +11,20 @@ echo.
 set "GAME_PATH="
 
 :: Check common Steam locations
-for %%P in (
-    "C:\Program Files (x86)\Steam\steamapps\common\SurrounDead"
-    "C:\Program Files\Steam\steamapps\common\SurrounDead"
-    "D:\SteamLibrary\steamapps\common\SurrounDead"
-    "E:\SteamLibrary\steamapps\common\SurrounDead"
-    "F:\SteamLibrary\steamapps\common\SurrounDead"
-    "G:\SteamLibrary\steamapps\common\SurrounDead"
-) do (
-    if exist "%%~P\SurrounDead.exe" (
-        set "GAME_PATH=%%~P"
-        goto :found
-    )
+if exist "C:\Program Files (x86)\Steam\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=C:\Program Files (x86)\Steam\steamapps\common\SurrounDead"
+if exist "C:\Program Files\Steam\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=C:\Program Files\Steam\steamapps\common\SurrounDead"
+if exist "D:\SteamLibrary\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=D:\SteamLibrary\steamapps\common\SurrounDead"
+if exist "E:\SteamLibrary\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=E:\SteamLibrary\steamapps\common\SurrounDead"
+if exist "F:\SteamLibrary\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=F:\SteamLibrary\steamapps\common\SurrounDead"
+if exist "G:\SteamLibrary\steamapps\common\SurrounDead\SurrounDead.exe" set "GAME_PATH=G:\SteamLibrary\steamapps\common\SurrounDead"
+
+if "%GAME_PATH%"=="" (
+    echo Could not auto-detect SurrounDead installation.
+    set /p "GAME_PATH=Enter path to SurrounDead folder: "
 )
 
-:: If not found, ask user
-echo Could not auto-detect SurrounDead installation.
-set /p "GAME_PATH=Enter path to SurrounDead folder: "
-
-:found
 echo.
-echo Found game at: %GAME_PATH%
+echo Found game at: "%GAME_PATH%"
 echo.
 
 set "WIN64=%GAME_PATH%\SurrounDead\Binaries\Win64"
@@ -39,7 +32,8 @@ set "LOGICMODS=%GAME_PATH%\SurrounDead\Content\Paks\LogicMods"
 
 :: Verify paths exist
 if not exist "%WIN64%" (
-    echo ERROR: Cannot find %WIN64%
+    echo ERROR: Cannot find "%WIN64%"
+    echo Make sure SurrounDead is installed correctly.
     pause
     exit /b 1
 )
