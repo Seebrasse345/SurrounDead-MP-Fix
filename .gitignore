@@ -1,0 +1,5 @@
+*.log
+*.pdb
+*.dmp
+*.bak
+imgui.ini
