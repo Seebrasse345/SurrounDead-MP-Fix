@@ -78,6 +78,13 @@ Copy to `SurrounDead/SurrounDead/Binaries/Win64/`:
 Copy to `SurrounDead/SurrounDead/Content/Paks/LogicMods/`:
 - `MPSpawnFix_P.pak`
 
+## Crash Debugging
+
+- UE4SS is configured to write full memory dumps for deeper analysis.
+- The installer creates `Symbols/` and sets `_NT_SYMBOL_PATH` to use the Microsoft symbol server.
+- Crash dumps are in `SurrounDead/SurrounDead/Binaries/Win64/crash_*.dmp`.
+- Open the dump in WinDbg and run `!analyze -v` (restart your shell after install so `_NT_SYMBOL_PATH` is picked up).
+
 ## Requirements
 
 **BOTH host AND client need this mod installed!**

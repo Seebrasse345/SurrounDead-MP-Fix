@@ -29,6 +29,7 @@ echo.
 
 set "WIN64=%GAME_PATH%\SurrounDead\Binaries\Win64"
 set "LOGICMODS=%GAME_PATH%\SurrounDead\Content\Paks\LogicMods"
+set "SYMBOLS=%GAME_PATH%\Symbols"
 
 :: Verify paths exist
 if not exist "%WIN64%" (
@@ -43,6 +44,15 @@ if not exist "%LOGICMODS%" (
     mkdir "%LOGICMODS%"
     echo Created LogicMods folder
 )
+
+:: Create symbols cache folder and set user symbol path
+if not exist "%SYMBOLS%" (
+    mkdir "%SYMBOLS%"
+    echo Created Symbols folder
+)
+set "SYMBOL_PATH=srv*%SYMBOLS%*https://msdl.microsoft.com/download/symbols"
+setx _NT_SYMBOL_PATH "%SYMBOL_PATH%" >nul
+echo   - Symbol path set for current user
 
 echo Installing UE4SS...
 copy /Y "%~dp0dwmapi.dll" "%WIN64%\" >nul
