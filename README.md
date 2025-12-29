@@ -1,125 +1,210 @@
 # SurrounDead Multiplayer Fix
 
-Fixes multiplayer issues in SurrounDead where joining players spawn as "camera only" with no character control.
+Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Features
+## Current Version: v4.1
 
-- Automatic detection of players without pawns
-- Multiple spawn/possession methods for reliability
-- Teleport commands for stuck players
-- Works on both host and client
+## The Problem
 
-## Quick Install
+When clients join a SurrounDead multiplayer session:
+- They spawn as "camera only" - no pawn/character
+- Characters spawn underground (Z < -500)
+- No input control - can't move, look, or open menus
+- Escape key doesn't work
 
-### Option 1: Automatic (Recommended)
+## How Our Fix Works
 
-1. Download this repo (Code > Download ZIP) or clone it
-2. Run `install.bat`
-3. Done!
+### Architecture
+Two-component system:
+1. **Lua Mod (MPFix)** - Runtime spawn detection and possession
+2. **Blueprint Mod (MPSpawnFix_P.pak)** - Server-side spawn hooks
 
-### Option 2: Manual Install
+### Server-Side Logic (Host)
+```
+1. Poll every 3 seconds for PlayerControllers
+2. Skip local controller (host) - only process remote clients
+3. For each remote client without a pawn:
+   a. Try GameMode:RestartPlayer(pc)
+   b. Find unpossessed BP_PlayerCharacter_C and Possess()
+   c. Try pc:ServerRestartPlayer()
+4. Run SetupPossessedPawn() to configure replication
+5. Teleport underground pawns to valid location
+```
 
-Copy files to your SurrounDead installation:
+### Client-Side Logic (Joining Player)
+```
+1. Detect when local controller gets a pawn
+2. Run FixLocalInput() to enable controls
+3. Set input mode to GameAndUI (allows escape menu)
+```
+
+### SetupPossessedPawn() - What it does
+```lua
+pc:EnableInput(pc)
+pc:SetInputModeGameOnly()
+pc:SetIgnoreMoveInput(false)
+pc:SetIgnoreLookInput(false)
+pawn:SetOwner(pc)
+pawn:SetReplicates(true)
+pawn:SetReplicateMovement(true)
+pawn:ForceNetUpdate()
+pawn:SetAutonomousProxy(true)
+pawn.CharacterMovement:SetMovementMode(1)  -- Walking
+pawn:OnRep_Controller()
+pawn:OnRep_PlayerState()
+pc:AcknowledgePossession(pawn)
+pc:ClientRestart(pawn)
+```
+
+## Installation
+
+### Quick Install
+```bash
+git clone https://github.com/Seebrasse345/SurrounDead-MP-Fix.git
+cd SurrounDead-MP-Fix
+.\install.bat
+```
+
+### Manual Install
+Copy to `SurrounDead/SurrounDead/Binaries/Win64/`:
+- `dwmapi.dll`
+- `UE4SS.dll`
+- `UE4SS-settings.ini`
+- `Mods/` folder
+
+Copy to `SurrounDead/SurrounDead/Content/Paks/LogicMods/`:
+- `MPSpawnFix_P.pak`
+
+## Requirements
+
+**BOTH host AND client need this mod installed!**
+
+The server handles spawn/possession, but the client needs the mod for:
+- Input fixing
+- Client-side setup
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `mpfix` | Force spawn check + input fix |
+| `mpinfo` | Show multiplayer debug info |
+| `mpinput` | Fix local input only |
+| `tphost` | Teleport all players to host |
+| **F6** | Hotkey for mpfix |
+
+## Known Issues
+
+### Solved
+- [x] Game crashes on startup with hooks - **Fixed**: Use polling instead
+- [x] UE4SS console shows white window - **Fixed**: GraphicsAPI=dx11
+- [x] Crash on "New player detected" - **Fixed**: Skip first check cycle
+- [x] FString concatenation errors - **Fixed**: Use tostring()
+- [x] tphost crash - **Fixed**: Use {} instead of nil for HitResult
+
+### Current Issues
+- [ ] Client may not have full control after spawn
+- [ ] Escape menu may not work on client (press F6)
+- [ ] Replication not 100% reliable
+
+### Root Cause
+The game's `BP_SurroundeadGameMode` doesn't properly implement:
+- `PostLogin` spawn for remote clients
+- Proper pawn class replication
+- Network authority setup
+
+## Technical Findings
+
+### What Doesn't Work
+- `RegisterHook` on spawn functions - crashes game
+- `HandleStartingNewPlayer` hook - crashes
+- `PostLogin` hook - crashes
+- `RestartPlayer` alone - doesn't actually spawn pawn
+- `ServerRestartPlayer` alone - same issue
+
+### What Works
+- Polling with `LoopAsync` - stable
+- Finding unpossessed characters and `Possess()` - works
+- `SetupPossessedPawn()` replication calls - partially works
+- Client-side `FixLocalInput()` - helps with controls
+
+### NetMode Values
+- 0 = Standalone
+- 1 = DedicatedServer
+- 2 = ListenServer
+- 3 = Client
+
+### Key Classes
+- `BP_SurroundeadGameMode` - Game mode (server only)
+- `BP_PlayerCharacter_C` - Player character blueprint
+- `PlayerController` - Input and possession
+- `CharacterMovement` - Movement component
+
+## File Structure
 
 ```
 SurrounDead/
   SurrounDead/
     Binaries/Win64/
-      dwmapi.dll          <- copy here
-      UE4SS.dll           <- copy here
-      UE4SS-settings.ini  <- copy here
-      Mods/               <- copy entire folder here
+      dwmapi.dll              # UE4SS loader
+      UE4SS.dll               # UE4SS core (16MB)
+      UE4SS-settings.ini      # Config (GraphicsAPI=dx11)
+      UE4SS.log               # Debug log
+      Mods/
+        MPFix/
+          Scripts/
+            main.lua          # Main fix mod (v4.1)
+        BPModLoaderMod/       # Loads .pak mods
+        shared/               # Lua libraries
+        mods.txt              # Mod enable list
     Content/Paks/
-      LogicMods/          <- create if doesn't exist
-        MPSpawnFix_P.pak  <- copy here
+      LogicMods/
+        MPSpawnFix_P.pak      # Blueprint mod
 ```
 
-## Installation Commands (PowerShell)
+## Development
 
-```powershell
-# Clone the repo
-git clone https://github.com/Seebrasse345/SurrounDead-MP-Fix.git
+### Source Locations
+- Lua mod: `Mods/MPFix/Scripts/main.lua`
+- Blueprint source: `ModTools/MPSpawnFix/`
+- C++ reference: `ModTools/MPSpawnFix/Source/MPSpawnFix/ModActor.cpp`
 
-# Navigate to folder
-cd SurrounDead-MP-Fix
+### Testing
+1. Host starts game, hosts server (F8)
+2. Client joins (F9 or console: `open IP:7777`)
+3. Check UE4SS.log for `[MPFix]` messages
+4. Use `mpinfo` to see controller/pawn status
 
-# Run installer
-.\install.bat
+### Debug Commands
+```
+mpinfo          # Show all controller/pawn info
+stat net        # UE network stats
 ```
 
-## Alternative: One-liner Install
+## Version History
 
-```powershell
-# Download and run (PowerShell as Admin)
-Invoke-WebRequest -Uri "https://github.com/Seebrasse345/SurrounDead-MP-Fix/archive/refs/heads/main.zip" -OutFile "$env:TEMP\mpfix.zip"; Expand-Archive -Path "$env:TEMP\mpfix.zip" -DestinationPath "$env:TEMP\mpfix" -Force; & "$env:TEMP\mpfix\SurrounDead-MP-Fix-main\install.bat"
-```
+### v4.1
+- Added client-side input auto-fix
+- New `mpinput` command
+- F6 fixes input on both server and client
+- More pcall safety in GetNetMode/IsInGame
 
-## In-Game Commands
+### v4.0
+- Complete rewrite based on C++ ModActor
+- Fixed crash on first run
+- Added NetMode check (server only)
+- Comprehensive SetupPossessedPawn()
 
-Open console with `~` (tilde) key:
-
-| Command | Description |
-|---------|-------------|
-| `mpfix` | Force spawn fix for stuck players |
-| `mpinfo` | Show multiplayer debug info |
-| `tphost` | Teleport all players to host location |
-
-**Hotkey:** Press `F6` to manually trigger spawn fix
-
-## Requirements
-
-- SurrounDead (Steam version)
-- Both host AND client need this mod installed
-
-## Troubleshooting
-
-### White/blank UE4SS console window
-Already fixed in this package - uses DirectX 11 instead of OpenGL.
-
-### Player still has no control after joining
-1. Host should type `mpfix` in console
-2. Try `tphost` to teleport client to host
-3. Client may need to rejoin
-
-### Game crashes on startup
-- Verify game files through Steam
-- Make sure you're using the correct game version
-
-## File Structure
-
-```
-UE4SS_Package/
-  install.bat           # Auto-installer
-  dwmapi.dll            # UE4SS loader
-  UE4SS.dll             # UE4SS core
-  UE4SS-settings.ini    # Config (GraphicsAPI=dx11)
-  Mods/
-    MPFix/              # Main multiplayer fix mod
-    BPModLoaderMod/     # Blueprint mod loader
-    shared/             # Shared Lua libraries
-    ...
-  LogicMods/
-    MPSpawnFix_P.pak    # Blueprint spawn fix
-```
-
-## Technical Details
-
-This mod uses UE4SS (Unreal Engine 4/5 Scripting System) to:
-- Poll for PlayerControllers without possessed pawns
-- Attempt multiple spawn methods (RestartPlayer, SpawnDefaultPawnAtTransform, etc.)
-- Find and possess orphaned character actors
-- Handle replication setup for multiplayer
-
-## Version
-
-- MPFix: v3.7
-- UE4SS: Latest compatible version
-
-## License
-
-MIT - Feel free to modify and redistribute.
+### v3.x
+- Initial polling approach
+- Multiple spawn methods
+- Hook crashes discovered
 
 ## Credits
 
-- UE4SS Team for the scripting system
+- UE4SS Team - Scripting system
 - SurrounDead community
+
+## License
+
+MIT
