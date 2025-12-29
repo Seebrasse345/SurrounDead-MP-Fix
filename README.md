@@ -12,6 +12,14 @@ When clients join a SurrounDead multiplayer session:
 - No input control - can't move, look, or open menus
 - Escape key doesn't work
 
+## Current Status (v4.7)
+
+- Init crash can still occur on some machines right after "Initializing MPFix v4.7" in UE4SS.log.
+- Client join often shows local controller but no pawn (`mpdebug` reports `Pawn: NONE`).
+- Camera control can regress and client movement/menu input still fails.
+- Host may not see client or client disconnects shortly after load-in.
+- Net role can be "unknown" early; server/client loop waits for NetDriver.
+
 ## How Our Fix Works
 
 ### Architecture
@@ -82,6 +90,7 @@ Copy to `SurrounDead/SurrounDead/Content/Paks/LogicMods/`:
 
 - UE4SS is configured to write crash dumps for analysis.
 - Full memory dumps are disabled by default for WinDbg compatibility; set `FullMemoryDump = 1` in `UE4SS-settings.ini` if needed.
+- Full memory dumps have failed to open in cdb (HRESULT 0x80004005) on this setup; use minidumps unless a full dump is specifically required.
 - The installer creates `Symbols/` and sets `_NT_SYMBOL_PATH` to use the Microsoft symbol server.
 - Crash dumps are in `SurrounDead/SurrounDead/Binaries/Win64/crash_*.dmp`.
 - Open the dump in WinDbg and run `!analyze -v` (restart your shell after install so `_NT_SYMBOL_PATH` is picked up).
@@ -117,7 +126,10 @@ The server handles spawn/possession, but the client needs the mod for:
 - [x] tphost crash - **Fixed**: Use {} instead of nil for HitResult
 
 ### Current Issues
-- [ ] Client may not have full control after spawn
+- [ ] Init crash still occurs on some machines right after MPFix initialization
+- [ ] Client often has no pawn after join; movement/menu input not restored
+- [ ] Camera control can regress after recent changes
+- [ ] Client may be invisible to host or disconnect shortly after load-in
 - [ ] Escape menu may still be unreliable on client (ESC fallback added)
 - [ ] Replication not 100% reliable
 
