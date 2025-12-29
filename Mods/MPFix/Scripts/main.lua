@@ -298,7 +298,7 @@ local function SpawnPawnForController(pc)
 
                             -- Move to spawn location first
                             pcall(function()
-                                char:K2_SetActorLocation(spawnLoc, false, nil, true)
+                                char:K2_SetActorLocation(spawnLoc, false, {}, true)
                             end)
 
                             -- Possess
@@ -338,7 +338,7 @@ local function TeleportUndergroundPawn(pawn)
     pcall(function()
         local oldLoc = pawn:K2_GetActorLocation()
         Log("Teleporting pawn from Z=" .. tostring(oldLoc.Z) .. " to Z=" .. tostring(spawnLoc.Z))
-        pawn:K2_SetActorLocation(spawnLoc, false, nil, true)
+        pawn:K2_SetActorLocation(spawnLoc, false, {}, true)
     end)
 end
 
@@ -505,7 +505,7 @@ RegisterConsoleCommandHandler("tphost", function()
             for _, c in ipairs(chars) do
                 if c ~= localPC.Pawn and IsValidObject(c) then
                     local newLoc = { X = hostLoc.X + offset, Y = hostLoc.Y, Z = hostLoc.Z + 50 }
-                    c:K2_SetActorLocation(newLoc, false, nil, true)
+                    c:K2_SetActorLocation(newLoc, false, {}, true)
                     Log("Teleported player to host")
                     offset = offset + 200
                 end
