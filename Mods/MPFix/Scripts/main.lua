@@ -1,8 +1,8 @@
--- MPFix v4.6 - Server spawn fix + Enhanced client input fix
+-- MPFix v4.7 - Server spawn fix + Enhanced client input fix
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.6 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.7 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -116,24 +116,6 @@ local function GetNetMode()
             return result
         end
     end
-
-    local ksl = nil
-    pcall(function() ksl = UEHelpers.GetKismetSystemLibrary() end)
-    if IsValidObject(ksl) then
-        local ctx = GetWorldSafe() or GetLocalPlayerController()
-        if IsValidObject(ctx) then
-            local result = nil
-            pcall(function()
-                if ksl.GetNetMode then
-                    result = ksl:GetNetMode(ctx)
-                end
-            end)
-            if result ~= nil then
-                return result
-            end
-        end
-    end
-
     return nil
 end
 
@@ -168,14 +150,17 @@ local function IsServer()
         if netMode == 0 or netMode == 1 or netMode == 2 then
             return true
         end
+        if netMode == 3 then
+            return false
+        end
 
-        return false
+        return nil
     end
 
     local netMode = GetNetMode()
     if netMode == 3 then return false end
     if netMode == 0 or netMode == 1 or netMode == 2 then return true end
-    return false
+    return nil
 end
 
 local function IsInGame()
@@ -265,7 +250,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.6 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.7 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -300,7 +285,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.6 enhanced)...")
+    Log("Fixing local input (v4.7 enhanced)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -479,6 +464,36 @@ local function OnEscapeKey()
     end)
 end
 
+local function OnClientRestartHook(self, newPawn)
+    SafeCall("ClientRestartHook", function()
+        local pc = nil
+        pcall(function() pc = self:get() end)
+        if not IsValidObject(pc) then
+            pc = self
+        end
+
+        if IsValidObject(pc) then
+            local isLocal = false
+            pcall(function() isLocal = pc:IsLocalController() end)
+            if isLocal then
+                Log("ClientRestart hook - fixing input")
+                if ExecuteWithDelay then
+                    ExecuteWithDelay(200, FixLocalInput)
+                else
+                    FixLocalInput()
+                end
+            end
+        end
+    end)
+end
+
+if RegisterHook then
+    pcall(function()
+        RegisterHook("/Script/Engine.PlayerController:ClientRestart", OnClientRestartHook)
+        Log("ClientRestart hook registered")
+    end)
+end
+
 -- ============================================
 -- SERVER-SIDE SPAWN FIX
 -- ============================================
@@ -523,9 +538,17 @@ local function SetupPossessedPawn(pc, pawn)
 
     pcall(function()
         local mesh = pawn.Mesh
-        if mesh and mesh.SetVisibility then
-            mesh:SetVisibility(true, true)
+        if mesh then
+            if mesh.SetVisibility then mesh:SetVisibility(true, true) end
+            if mesh.SetOwnerNoSee then mesh:SetOwnerNoSee(false) end
+            if mesh.SetOnlyOwnerSee then mesh:SetOnlyOwnerSee(false) end
+            if mesh.bOwnerNoSee ~= nil then mesh.bOwnerNoSee = false end
+            if mesh.bOnlyOwnerSee ~= nil then mesh.bOnlyOwnerSee = false end
         end
+    end)
+
+    pcall(function()
+        if pawn.SetActorEnableCollision then pawn:SetActorEnableCollision(true) end
     end)
 
     pcall(function()
@@ -656,7 +679,8 @@ local function TeleportUndergroundPawn(pawn)
 end
 
 local function CheckForPawnlessPlayers()
-    if not IsServer() or not IsInGame() then return end
+    local isServer = IsServer()
+    if isServer ~= true or not IsInGame() then return end
 
     local pcs = nil
     local ok = pcall(function() pcs = FindAllOf("PlayerController") end)
@@ -724,7 +748,8 @@ end
 
 -- Client check
 local function CheckClientInput()
-    if IsServer() or not IsInGame() then return end
+    local isServer = IsServer()
+    if isServer ~= false or not IsInGame() then return end
 
     local localPC = GetLocalPlayerController()
     if not IsValidObject(localPC) then
@@ -1010,18 +1035,19 @@ end)
 
 ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v4.6")
-    Log("NetMode: " .. tostring(GetNetMode()))
-    Log("IsServer: " .. tostring(IsServer()))
+    Log("Initializing MPFix v4.7")
+    local netMode = GetNetMode()
+    local isServer = IsServer()
+    Log("NetMode: " .. tostring(netMode ~= nil and netMode or "unknown"))
+    Log("IsServer: " .. tostring(isServer ~= nil and isServer or "unknown"))
     Log("========================================")
-
-    GetCharacterClass()
 
     Log("Starting periodic check (every " .. tostring(Config.CheckInterval) .. "ms)")
     LoopAsync(Config.CheckInterval, function()
-        if IsServer() then
+        local isServer = IsServer()
+        if isServer == true then
             SafeCall("ServerCheck", CheckForPawnlessPlayers)
-        else
+        elseif isServer == false then
             SafeCall("ClientCheck", CheckClientInput)
         end
         return false
@@ -1030,5 +1056,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.6 Loaded")
+print("[MPFix] v4.7 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost | F6 = manual fix | ESC = pause menu")

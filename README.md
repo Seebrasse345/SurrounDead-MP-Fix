@@ -2,7 +2,7 @@
 
 Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Current Version: v4.6
+## Current Version: v4.7
 
 ## The Problem
 
@@ -80,7 +80,8 @@ Copy to `SurrounDead/SurrounDead/Content/Paks/LogicMods/`:
 
 ## Crash Debugging
 
-- UE4SS is configured to write full memory dumps for deeper analysis.
+- UE4SS is configured to write crash dumps for analysis.
+- Full memory dumps are disabled by default for WinDbg compatibility; set `FullMemoryDump = 1` in `UE4SS-settings.ini` if needed.
 - The installer creates `Symbols/` and sets `_NT_SYMBOL_PATH` to use the Microsoft symbol server.
 - Crash dumps are in `SurrounDead/SurrounDead/Binaries/Win64/crash_*.dmp`.
 - Open the dump in WinDbg and run `!analyze -v` (restart your shell after install so `_NT_SYMBOL_PATH` is picked up).
@@ -166,7 +167,7 @@ SurrounDead/
       Mods/
         MPFix/
           Scripts/
-            main.lua          # Main fix mod (v4.6)
+            main.lua          # Main fix mod (v4.7)
         BPModLoaderMod/       # Loads .pak mods
         shared/               # Lua libraries
         mods.txt              # Mod enable list
@@ -197,6 +198,12 @@ stat net        # UE network stats
 ```
 
 ## Version History
+
+### v4.7
+- Avoid KSL GetNetMode on init to prevent early crashes
+- ClientRestart hook re-triggers input fix on client possession
+- Extra mesh visibility and owner-see fixes on spawned pawns
+- Server/client loop waits for known net role
 
 ### v4.6
 - IsServer uses NetDriver client connections to avoid false server on clients

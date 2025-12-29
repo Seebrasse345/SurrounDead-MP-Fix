@@ -2,7 +2,7 @@
 setlocal
 
 echo ==========================================
-echo  SurrounDead MP Fix Installer (v4.6)
+echo  SurrounDead MP Fix Installer (v4.7)
 echo  Installs UE4SS + MPFix mod
 echo ==========================================
 echo.
