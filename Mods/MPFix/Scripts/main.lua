@@ -1,8 +1,8 @@
--- MPFix v4.8 - Server spawn fix + Enhanced client input fix (crash fixes)
+-- MPFix v4.9 - Server spawn fix + Enhanced client input fix (movement fix)
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.8 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.9 - Movement & Pause Menu Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -252,7 +252,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.8 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.9 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -287,7 +287,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.8 enhanced)...")
+    Log("Fixing local input (v4.9 movement fix)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -342,6 +342,23 @@ local function FixLocalInput()
                 if pawn.EnableInput then pawn:EnableInput(pc) end
             end)
 
+            -- CRITICAL: Set autonomous proxy for client movement authority
+            pcall(function()
+                if pawn.SetAutonomousProxy then
+                    pawn:SetAutonomousProxy(true)
+                    Log("SetAutonomousProxy(true)")
+                end
+            end)
+
+            -- Set Role directly (ROLE_AutonomousProxy = 3)
+            pcall(function()
+                if pawn.Role ~= nil then
+                    local oldRole = pawn.Role
+                    pawn.Role = 3
+                    Log("Set Role: " .. tostring(oldRole) .. " -> 3 (AutonomousProxy)")
+                end
+            end)
+
             -- Set controller rotation usage
             pcall(function()
                 if pawn.bUseControllerRotationYaw ~= nil then
@@ -349,7 +366,7 @@ local function FixLocalInput()
                 end
             end)
 
-            -- Movement component setup
+            -- Movement component setup - ENHANCED for client prediction
             pcall(function()
                 local movement = pawn.CharacterMovement
                 if movement then
@@ -358,6 +375,13 @@ local function FixLocalInput()
                     if movement.SetMovementMode then
                         movement:SetMovementMode(1)
                     end
+                    -- Network smoothing for client
+                    pcall(function()
+                        if movement.NetworkSmoothingMode ~= nil then
+                            movement.NetworkSmoothingMode = 1
+                            Log("Set NetworkSmoothingMode = 1")
+                        end
+                    end)
                     -- Activate component
                     if movement.Activate then
                         movement:Activate(false)
@@ -426,42 +450,141 @@ local function FixLocalInput()
     end)
 end
 
--- Escape key handler as backup for pause menu
+-- Escape key handler as backup for pause menu (v4.9 Enhanced)
 local function OnEscapeKey()
-    Log("Escape pressed - trying pause menu")
+    Log("Escape pressed - trying pause menu (v4.9)")
     pcall(function()
-        local pc = nil
-        local pcs = FindAllOf("PlayerController")
-        if pcs then
-            for _, p in ipairs(pcs) do
-                if IsValidObject(p) and p:IsLocalController() then
-                    pc = p
-                    break
-                end
-            end
+        local pc = GetLocalPlayerController()
+        if not IsValidObject(pc) then
+            Log("No local controller for pause menu")
+            return
         end
-        if pc then
-            -- Try SetPause
+
+        -- Method 1: Try game-specific pause/menu functions on PlayerController
+        local pauseHandled = false
+        pcall(function()
+            if pc.ShowPauseMenu then
+                pc:ShowPauseMenu()
+                pauseHandled = true
+                Log("Called ShowPauseMenu")
+            elseif pc.TogglePauseMenu then
+                pc:TogglePauseMenu()
+                pauseHandled = true
+                Log("Called TogglePauseMenu")
+            elseif pc.OpenPauseMenu then
+                pc:OpenPauseMenu()
+                pauseHandled = true
+                Log("Called OpenPauseMenu")
+            end
+        end)
+
+        -- Method 2: Try SetPause on controller
+        if not pauseHandled then
             pcall(function()
                 if pc.SetPause then
                     local isPaused = false
                     pcall(function() isPaused = pc:IsPaused() end)
                     pc:SetPause(not isPaused)
                     Log("Toggled pause: " .. tostring(not isPaused))
+                    pauseHandled = true
                 end
             end)
-            -- Try showing pause widget
+        end
+
+        -- Method 3: Try GameMode pause functions
+        if not pauseHandled then
             pcall(function()
-                local widgets = FindAllOf("BP_PauseMenu_C")
-                if not widgets then widgets = FindAllOf("WBP_PauseMenu_C") end
-                if widgets and #widgets > 0 then
-                    local menu = widgets[1]
-                    if IsValidObject(menu) and menu.SetVisibility then
-                        menu:SetVisibility(0)
-                        Log("Showed pause menu widget")
+                local gm = FindFirstOf("GameModeBase")
+                if IsValidObject(gm) then
+                    if gm.RequestPause then
+                        gm:RequestPause()
+                        Log("Called GameMode RequestPause")
+                        pauseHandled = true
                     end
                 end
             end)
+        end
+
+        -- Method 4: Search for pause menu widgets with multiple naming conventions
+        local widgetClasses = {
+            "BP_PauseMenu_C", "WBP_PauseMenu_C", "W_PauseMenu_C",
+            "BP_PauseWidget_C", "WBP_PauseWidget_C",
+            "BP_GameMenu_C", "WBP_GameMenu_C",
+            "BP_EscapeMenu_C", "WBP_EscapeMenu_C",
+            "BP_InGameMenu_C", "WBP_InGameMenu_C",
+            "BP_MainMenu_C", "WBP_MainMenu_C"
+        }
+
+        local menuFound = false
+        for _, className in ipairs(widgetClasses) do
+            if menuFound then break end
+            pcall(function()
+                local widgets = FindAllOf(className)
+                if widgets and #widgets > 0 then
+                    local menu = widgets[1]
+                    if IsValidObject(menu) then
+                        Log("Found widget: " .. className)
+                        pcall(function()
+                            if menu.SetVisibility then
+                                local currentVis = 2
+                                pcall(function() currentVis = menu:GetVisibility() end)
+                                local newVis = (currentVis == 0) and 2 or 0
+                                menu:SetVisibility(newVis)
+                                Log("Toggled " .. className .. " visibility: " .. tostring(newVis))
+                                menuFound = true
+                            end
+                        end)
+                        if not menuFound then
+                            pcall(function()
+                                if menu.AddToViewport then
+                                    menu:AddToViewport(100)
+                                    Log("Added " .. className .. " to viewport")
+                                    menuFound = true
+                                end
+                            end)
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- Method 5: Try HUD pause menu
+        if not menuFound then
+            pcall(function()
+                local hud = nil
+                pcall(function() hud = pc:GetHUD() end)
+                if IsValidObject(hud) then
+                    if hud.ShowPauseMenu then
+                        hud:ShowPauseMenu()
+                        Log("Called HUD ShowPauseMenu")
+                        menuFound = true
+                    elseif hud.TogglePauseMenu then
+                        hud:TogglePauseMenu()
+                        Log("Called HUD TogglePauseMenu")
+                        menuFound = true
+                    end
+                end
+            end)
+        end
+
+        -- Method 6: Set input mode to UI as fallback
+        if not menuFound and not pauseHandled then
+            pcall(function()
+                if pc.SetInputModeUIOnly then
+                    pc:SetInputModeUIOnly(nil, false)
+                    Log("Set InputMode to UIOnly (fallback)")
+                elseif pc.SetInputModeGameAndUI then
+                    pc:SetInputModeGameAndUI(nil, true, false)
+                    Log("Set InputMode to GameAndUI (fallback)")
+                end
+                if pc.SetShowMouseCursor then
+                    pc:SetShowMouseCursor(true)
+                end
+            end)
+        end
+
+        if not menuFound and not pauseHandled then
+            Log("Could not find pause menu - use mpwidgets command to list widgets")
         end
     end)
 end
@@ -1031,6 +1154,42 @@ RegisterConsoleCommandHandler("tphost", function()
     return true
 end)
 
+-- Debug command to list all UI widgets (helps find pause menu)
+RegisterConsoleCommandHandler("mpwidgets", function()
+    Log("========== UI WIDGETS ==========")
+    SafeCall("mpwidgets", function()
+        local widgetTypes = {
+            "UserWidget", "Widget", "PauseMenu", "GameMenu", "EscapeMenu",
+            "InGameMenu", "MainMenu", "HUD", "UI", "Menu"
+        }
+        local found = {}
+        for _, typeName in ipairs(widgetTypes) do
+            pcall(function()
+                local widgets = FindAllOf(typeName)
+                if widgets then
+                    for _, w in ipairs(widgets) do
+                        if IsValidObject(w) then
+                            local name = "unknown"
+                            pcall(function() name = w:GetFullName() end)
+                            if not found[name] then
+                                found[name] = true
+                                local vis = "?"
+                                pcall(function() vis = tostring(w:GetVisibility()) end)
+                                Log("  " .. name .. " (Vis:" .. vis .. ")")
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        if next(found) == nil then
+            Log("  No widgets found")
+        end
+    end)
+    Log("================================")
+    return true
+end)
+
 -- ============================================
 -- INIT
 -- ============================================
@@ -1038,7 +1197,7 @@ end)
 ExecuteWithDelay(Config.InitialDelay, function()
     SafeCall("Init", function()
         Log("========================================")
-        Log("Initializing MPFix v4.8")
+        Log("Initializing MPFix v4.9")
 
         -- Safe info logging - wrapped to prevent crash
         local netMode = nil
@@ -1076,5 +1235,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     end)
 end)
 
-print("[MPFix] v4.8 Loaded")
-print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost | F6 = manual fix | ESC = pause menu")
+print("[MPFix] v4.9 Loaded")
+print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost, mpwidgets | F6 = manual fix | ESC = pause menu")
