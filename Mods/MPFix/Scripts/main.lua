@@ -1,8 +1,8 @@
--- MPFix v4.10 - Server spawn fix + Enhanced client input fix (movement fix)
+-- MPFix v4.11 - Server spawn fix + Enhanced client input fix (movement fix)
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.10 - Movement & Pause Menu Fix")
+print("[MPFix] Loading v4.11 - Movement & Pause Menu Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -11,7 +11,7 @@ local Config = {
     UndergroundZ = -500,
     SpawnOffsetX = 300,
     SpawnOffsetZ = 100,
-    SpawnRetryInterval = 3000,
+    SpawnRetryInterval = 8000,  -- v4.11: longer wait to not fight game logic
     WarmupChecks = 2,  -- Skip first N checks
 }
 
@@ -252,7 +252,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.10 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.11 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -287,7 +287,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.10 movement fix)...")
+    Log("Fixing local input (v4.11 movement fix)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -450,9 +450,9 @@ local function FixLocalInput()
     end)
 end
 
--- Escape key handler as backup for pause menu (v4.10 Enhanced)
+-- Escape key handler as backup for pause menu (v4.11 Enhanced)
 local function OnEscapeKey()
-    Log("Escape pressed - trying pause menu (v4.10)")
+    Log("Escape pressed - trying pause menu (v4.11)")
     pcall(function()
         local pc = GetLocalPlayerController()
         if not IsValidObject(pc) then
@@ -724,74 +724,35 @@ end
 local function SpawnPawnForController(pc)
     if not IsValidObject(pc) then return false end
 
-    Log("Attempting spawn for remote client...")
-    local spawnLoc = GetValidSpawnLocation()
-    Log("Spawn location: " .. tostring(spawnLoc.X) .. "," .. tostring(spawnLoc.Y) .. "," .. tostring(spawnLoc.Z))
+    Log("Requesting spawn for remote client...")
 
-    local success = false
-
-    -- Method 0: SpawnActor
-    if not success then
-        success = SpawnNewPawnForController(pc, spawnLoc)
-    end
-
-    -- Method 1: RestartPlayer
+    -- v4.11: Only use RestartPlayer - let the game handle spawning
+    -- Don't try to possess characters ourselves - it conflicts with game logic
     pcall(function()
         local gm = FindFirstOf("GameModeBase")
         if IsValidObject(gm) and gm.RestartPlayer then
-            Log("Trying RestartPlayer...")
+            Log("Calling RestartPlayer...")
             gm:RestartPlayer(pc)
-            ExecuteWithDelay(500, function()
-                local pawn = nil
-                pcall(function() pawn = pc:GetPawn() end)
-                if IsValidObject(pc) and IsValidObject(pawn) then
-                    Log("RestartPlayer SUCCESS!")
-                    SetupPossessedPawn(pc, pawn)
-                    success = true
-                end
-            end)
+        elseif pc.ServerRestartPlayer then
+            Log("Calling ServerRestartPlayer...")
+            pc:ServerRestartPlayer()
         end
     end)
 
-    -- Method 2: Find unpossessed character
-    if not success then
-        pcall(function()
-            Log("Looking for unpossessed characters...")
-            local chars = FindAllOf("BP_PlayerCharacter_C")
-            if chars then
-                for _, char in ipairs(chars) do
-                    if IsValidObject(char) and not IsValidObject(char.Controller) then
-                        Log("Found unpossessed character - possessing...")
-                        pcall(function() char:K2_SetActorLocation(spawnLoc, false, {}, true) end)
-                        pcall(function() pc:Possess(char) end)
-                        SetupPossessedPawn(pc, char)
-                        success = true
-                        return
-                    end
-                end
-            end
-        end)
-    end
-
-    -- Method 3: ServerRestartPlayer
-    if not success then
-        pcall(function()
-            if pc.ServerRestartPlayer then
-                Log("Trying ServerRestartPlayer...")
-                pc:ServerRestartPlayer()
-            end
-        end)
-    end
-
-    ExecuteWithDelay(800, function()
+    -- Check after delay if spawn worked
+    ExecuteWithDelay(1500, function()
+        if not IsValidObject(pc) then return end
         local pawn = nil
         pcall(function() pawn = pc:GetPawn() end)
         if IsValidObject(pawn) then
+            Log("RestartPlayer succeeded - setting up pawn")
             SetupPossessedPawn(pc, pawn)
+        else
+            Log("RestartPlayer did not create pawn yet")
         end
     end)
 
-    return success
+    return true
 end
 
 local function TeleportUndergroundPawn(pawn)
@@ -1191,14 +1152,14 @@ RegisterConsoleCommandHandler("mpwidgets", function()
 end)
 
 -- ============================================
--- INIT (v4.10 - Extra safe init for main menu)
+-- INIT (v4.11 - Extra safe init for main menu)
 -- ============================================
 
 ExecuteWithDelay(Config.InitialDelay, function()
     -- Don't call ANY UE functions during init - just start the loop
     -- This prevents crashes when mod loads at main menu
     print("[MPFix] ========================================")
-    print("[MPFix] Initializing MPFix v4.10")
+    print("[MPFix] Initializing MPFix v4.11")
     print("[MPFix] Starting periodic check (waiting for game session)")
     print("[MPFix] ========================================")
 
@@ -1237,5 +1198,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.10 Loaded")
+print("[MPFix] v4.11 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost, mpwidgets | F6 = manual fix | ESC = pause menu")
