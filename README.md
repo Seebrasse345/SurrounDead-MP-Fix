@@ -2,7 +2,7 @@
 
 Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Current Version: v4.1
+## Current Version: v4.2
 
 ## The Problem
 
@@ -88,10 +88,13 @@ The server handles spawn/possession, but the client needs the mod for:
 | Command | Description |
 |---------|-------------|
 | `mpfix` | Force spawn check + input fix |
-| `mpinfo` | Show multiplayer debug info |
 | `mpinput` | Fix local input only |
+| `mpinfo` | Show multiplayer debug info |
+| `mpdebug` | Dump local controller/pawn input status |
+| `mpmove` | Test local pawn movement |
 | `tphost` | Teleport all players to host |
 | **F6** | Hotkey for mpfix |
+| **ESC** | Pause menu fallback |
 
 ## Known Issues
 
@@ -104,7 +107,7 @@ The server handles spawn/possession, but the client needs the mod for:
 
 ### Current Issues
 - [ ] Client may not have full control after spawn
-- [ ] Escape menu may not work on client (press F6)
+- [ ] Escape menu may still be unreliable on client (ESC fallback added)
 - [ ] Replication not 100% reliable
 
 ### Root Cause
@@ -153,7 +156,7 @@ SurrounDead/
       Mods/
         MPFix/
           Scripts/
-            main.lua          # Main fix mod (v4.1)
+            main.lua          # Main fix mod (v4.2)
         BPModLoaderMod/       # Loads .pak mods
         shared/               # Lua libraries
         mods.txt              # Mod enable list
@@ -178,10 +181,17 @@ SurrounDead/
 ### Debug Commands
 ```
 mpinfo          # Show all controller/pawn info
+mpdebug         # Dump local input/pawn status
+mpmove          # Test local pawn movement
 stat net        # UE network stats
 ```
 
 ## Version History
+
+### v4.2
+- Enhanced client input recovery (movement component + Enhanced Input mapping)
+- ESC pause menu fallback
+- New `mpdebug` and `mpmove` commands
 
 ### v4.1
 - Added client-side input auto-fix

@@ -1,8 +1,8 @@
--- MPFix v4.1 - Server spawn fix + Client input fix
+-- MPFix v4.2 - Server spawn fix + Enhanced client input fix
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.1 - Server + Client Fix")
+print("[MPFix] Loading v4.2 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -138,11 +138,39 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX
+-- CLIENT-SIDE INPUT FIX (v4.2 Enhanced)
 -- ============================================
 
+local function SetupEnhancedInput(pc, pawn)
+    -- Try to setup Enhanced Input System (UE5)
+    pcall(function()
+        local localPlayer = nil
+        pcall(function() localPlayer = pc:GetLocalPlayer() end)
+        if localPlayer then
+            local subsystem = nil
+            pcall(function()
+                subsystem = localPlayer:GetSubsystem(StaticFindObject("/Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem"))
+            end)
+            if IsValidObject(subsystem) then
+                Log("Found Enhanced Input Subsystem")
+                local mappingContexts = FindAllOf("InputMappingContext")
+                if mappingContexts then
+                    for _, context in ipairs(mappingContexts) do
+                        if IsValidObject(context) then
+                            pcall(function()
+                                subsystem:AddMappingContext(context, 0)
+                                Log("Added mapping context")
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 local function FixLocalInput()
-    Log("Fixing local input...")
+    Log("Fixing local input (v4.2 enhanced)...")
 
     pcall(function()
         local pcs = FindAllOf("PlayerController")
@@ -154,37 +182,110 @@ local function FixLocalInput()
 
                     if isLocal then
                         Log("Found local controller")
+                        local pawn = nil
+                        pcall(function() pawn = pc:GetPawn() end)
 
-                        -- Enable input
+                        -- 1. Enable input on controller
                         pcall(function()
                             if pc.EnableInput then pc:EnableInput(pc) end
                         end)
 
-                        -- Set input mode (try GameAndUI first for escape menu)
+                        -- 2. Reset all input ignore flags
                         pcall(function()
-                            if pc.SetInputModeGameAndUI then
-                                pc:SetInputModeGameAndUI()
-                            elseif pc.SetInputModeGameOnly then
-                                pc:SetInputModeGameOnly()
-                            end
+                            if pc.ResetIgnoreInputFlags then pc:ResetIgnoreInputFlags() end
                         end)
-
-                        -- Disable input ignore
                         pcall(function()
                             if pc.SetIgnoreMoveInput then pc:SetIgnoreMoveInput(false) end
                             if pc.SetIgnoreLookInput then pc:SetIgnoreLookInput(false) end
                         end)
 
-                        -- Pawn input
-                        if IsValidObject(pc.Pawn) then
+                        -- 3. Set input mode for game AND UI (allows escape menu)
+                        pcall(function()
+                            if pc.SetInputModeGameAndUI then
+                                pc:SetInputModeGameAndUI(nil, false, false)
+                                Log("Set InputMode to GameAndUI")
+                            end
+                        end)
+
+                        -- 4. Mouse setup for gameplay
+                        pcall(function()
+                            if pc.SetShowMouseCursor then pc:SetShowMouseCursor(false) end
+                        end)
+                        pcall(function()
+                            if pc.bShowMouseCursor ~= nil then pc.bShowMouseCursor = false end
+                        end)
+
+                        -- 5. Pawn-specific input setup
+                        if IsValidObject(pawn) then
+                            Log("Setting up pawn input...")
+
+                            -- Enable input on pawn
                             pcall(function()
-                                if pc.Pawn.EnableInput then pc.Pawn:EnableInput(pc) end
+                                if pawn.EnableInput then pawn:EnableInput(pc) end
                             end)
 
+                            -- Set controller rotation usage
                             pcall(function()
-                                local movement = pc.Pawn.CharacterMovement
-                                if movement and movement.SetMovementMode then
-                                    movement:SetMovementMode(1)
+                                if pawn.bUseControllerRotationYaw ~= nil then
+                                    pawn.bUseControllerRotationYaw = true
+                                end
+                            end)
+
+                            -- Movement component setup
+                            pcall(function()
+                                local movement = pawn.CharacterMovement
+                                if movement then
+                                    Log("Setting up CharacterMovement...")
+                                    -- Set to walking mode
+                                    if movement.SetMovementMode then
+                                        movement:SetMovementMode(1)
+                                    end
+                                    -- Activate component
+                                    if movement.Activate then
+                                        movement:Activate(false)
+                                    end
+                                    -- Reset any constraints
+                                    if movement.SetPlaneConstraintEnabled then
+                                        movement:SetPlaneConstraintEnabled(false)
+                                    end
+                                    -- Check/fix walk speed
+                                    if movement.MaxWalkSpeed then
+                                        local speed = movement.MaxWalkSpeed
+                                        if speed == 0 or speed < 100 then
+                                            movement.MaxWalkSpeed = 600
+                                            Log("Fixed MaxWalkSpeed: " .. tostring(speed) .. " -> 600")
+                                        else
+                                            Log("MaxWalkSpeed: " .. tostring(speed))
+                                        end
+                                    end
+                                end
+                            end)
+
+                            -- Force view target
+                            pcall(function()
+                                if pc.SetViewTarget then
+                                    pc:SetViewTarget(pawn)
+                                end
+                            end)
+
+                            -- Trigger replication callbacks
+                            pcall(function()
+                                if pawn.OnRep_Controller then pawn:OnRep_Controller() end
+                            end)
+                            pcall(function()
+                                if pawn.OnRep_PlayerState then pawn:OnRep_PlayerState() end
+                            end)
+                        end
+
+                        -- 6. Try Enhanced Input setup
+                        SetupEnhancedInput(pc, pawn)
+
+                        -- 7. Acknowledge possession
+                        if IsValidObject(pawn) then
+                            pcall(function()
+                                if pc.AcknowledgePossession then
+                                    pc:AcknowledgePossession(pawn)
+                                    Log("Called AcknowledgePossession")
                                 end
                             end)
                         end
@@ -197,6 +298,46 @@ local function FixLocalInput()
         end
     end)
 end
+
+-- Escape key handler as backup for pause menu
+RegisterKeyBind(Key.ESCAPE, function()
+    Log("Escape pressed - trying pause menu")
+    pcall(function()
+        local pc = nil
+        local pcs = FindAllOf("PlayerController")
+        if pcs then
+            for _, p in ipairs(pcs) do
+                if IsValidObject(p) and p:IsLocalController() then
+                    pc = p
+                    break
+                end
+            end
+        end
+        if pc then
+            -- Try SetPause
+            pcall(function()
+                if pc.SetPause then
+                    local isPaused = false
+                    pcall(function() isPaused = pc:IsPaused() end)
+                    pc:SetPause(not isPaused)
+                    Log("Toggled pause: " .. tostring(not isPaused))
+                end
+            end)
+            -- Try showing pause widget
+            pcall(function()
+                local widgets = FindAllOf("BP_PauseMenu_C")
+                if not widgets then widgets = FindAllOf("WBP_PauseMenu_C") end
+                if widgets and #widgets > 0 then
+                    local menu = widgets[1]
+                    if IsValidObject(menu) and menu.SetVisibility then
+                        menu:SetVisibility(0)
+                        Log("Showed pause menu widget")
+                    end
+                end
+            end)
+        end
+    end)
+end)
 
 -- ============================================
 -- SERVER-SIDE SPAWN FIX
@@ -436,6 +577,108 @@ RegisterConsoleCommandHandler("mpinfo", function()
     return true
 end)
 
+-- Debug command to show detailed pawn/input status
+RegisterConsoleCommandHandler("mpdebug", function()
+    Log("========== MP DEBUG ==========")
+    SafeCall("mpdebug", function()
+        local pcs = FindAllOf("PlayerController")
+        if pcs then
+            for _, pc in ipairs(pcs) do
+                if IsValidObject(pc) then
+                    local isLocal = false
+                    pcall(function() isLocal = pc:IsLocalController() end)
+                    if isLocal then
+                        Log("Local PlayerController found")
+
+                        -- Check input state
+                        pcall(function()
+                            local ignoringMove = pc.bIgnoreMoveInput or "unknown"
+                            local ignoringLook = pc.bIgnoreLookInput or "unknown"
+                            Log("  bIgnoreMoveInput: " .. tostring(ignoringMove))
+                            Log("  bIgnoreLookInput: " .. tostring(ignoringLook))
+                        end)
+
+                        -- Check pawn
+                        local pawn = nil
+                        pcall(function() pawn = pc:GetPawn() end)
+                        if IsValidObject(pawn) then
+                            Log("  Pawn: " .. tostring(pawn:GetFullName()))
+
+                            -- Movement component
+                            pcall(function()
+                                local movement = pawn.CharacterMovement
+                                if movement then
+                                    Log("  CharacterMovement:")
+                                    Log("    MovementMode: " .. tostring(movement.MovementMode))
+                                    Log("    MaxWalkSpeed: " .. tostring(movement.MaxWalkSpeed))
+                                    Log("    IsActive: " .. tostring(movement:IsActive()))
+                                    if movement.Velocity then
+                                        Log("    Velocity: " .. tostring(movement.Velocity.X) .. "," .. tostring(movement.Velocity.Y) .. "," .. tostring(movement.Velocity.Z))
+                                    end
+                                end
+                            end)
+
+                            -- Input component
+                            pcall(function()
+                                if pawn.InputComponent then
+                                    Log("  Pawn InputComponent: EXISTS")
+                                else
+                                    Log("  Pawn InputComponent: MISSING")
+                                end
+                            end)
+                        else
+                            Log("  Pawn: NONE")
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    Log("==============================")
+    return true
+end)
+
+-- Force movement test command
+RegisterConsoleCommandHandler("mpmove", function()
+    Log("Testing movement...")
+    SafeCall("mpmove", function()
+        local pcs = FindAllOf("PlayerController")
+        if pcs then
+            for _, pc in ipairs(pcs) do
+                if IsValidObject(pc) and pc:IsLocalController() then
+                    local pawn = pc:GetPawn()
+                    if IsValidObject(pawn) then
+                        -- Try to move forward
+                        pcall(function()
+                            local loc = pawn:K2_GetActorLocation()
+                            local rot = pc:GetControlRotation()
+                            -- Move forward 100 units
+                            local newLoc = {
+                                X = loc.X + 100,
+                                Y = loc.Y,
+                                Z = loc.Z
+                            }
+                            pawn:K2_SetActorLocation(newLoc, false, {}, true)
+                            Log("Moved pawn forward 100 units")
+                        end)
+
+                        -- Try AddMovementInput
+                        pcall(function()
+                            if pawn.AddMovementInput then
+                                pawn:AddMovementInput({X=1, Y=0, Z=0}, 1.0, false)
+                                Log("Called AddMovementInput")
+                            end
+                        end)
+                    end
+                    break
+                end
+            end
+        end
+    end)
+    return true
+end)
+
 RegisterConsoleCommandHandler("tphost", function()
     SafeCall("tphost", function()
         local localPC = nil
@@ -480,7 +723,7 @@ end)
 
 ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v4.1")
+    Log("Initializing MPFix v4.2")
     Log("NetMode: " .. tostring(GetNetMode()))
     Log("IsServer: " .. tostring(IsServer()))
     Log("========================================")
@@ -500,5 +743,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.1 Loaded")
-print("[MPFix] Commands: mpfix, mpinfo, mpinput, tphost | F6 = manual fix")
+print("[MPFix] v4.2 Loaded")
+print("[MPFix] Commands: mpfix, mpinfo, mpinput, tphost | F6 = manual fix | ESC = pause menu")
