@@ -2,7 +2,7 @@
 
 Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Current Version: v4.5
+## Current Version: v4.6
 
 ## The Problem
 
@@ -159,7 +159,7 @@ SurrounDead/
       Mods/
         MPFix/
           Scripts/
-            main.lua          # Main fix mod (v4.5)
+            main.lua          # Main fix mod (v4.6)
         BPModLoaderMod/       # Loads .pak mods
         shared/               # Lua libraries
         mods.txt              # Mod enable list
@@ -190,6 +190,10 @@ stat net        # UE network stats
 ```
 
 ## Version History
+
+### v4.6
+- IsServer uses NetDriver client connections to avoid false server on clients
+- mpinfo shows NetDriver connection status
 
 ### v4.5
 - NetDriver-based server/client detection (fixes client mis-detected as server)

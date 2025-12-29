@@ -1,8 +1,8 @@
--- MPFix v4.5 - Server spawn fix + Enhanced client input fix
+-- MPFix v4.6 - Server spawn fix + Enhanced client input fix
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.5 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.6 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
@@ -152,25 +152,29 @@ end
 local function IsServer()
     local netDriver = GetNetDriver()
     if IsValidObject(netDriver) then
-        local hasServerConnection = false
-        pcall(function()
-            hasServerConnection = netDriver.ServerConnection ~= nil
-        end)
-        return not hasServerConnection
+        local serverConn = nil
+        pcall(function() serverConn = netDriver.ServerConnection end)
+        if IsValidObject(serverConn) then
+            return false
+        end
+
+        local clientConns = nil
+        pcall(function() clientConns = netDriver.ClientConnections end)
+        if clientConns and #clientConns > 0 then
+            return true
+        end
+
+        local netMode = GetNetMode()
+        if netMode == 0 or netMode == 1 or netMode == 2 then
+            return true
+        end
+
+        return false
     end
 
     local netMode = GetNetMode()
     if netMode == 3 then return false end
     if netMode == 0 or netMode == 1 or netMode == 2 then return true end
-
-    local pc = GetLocalPlayerController()
-    if IsValidObject(pc) and pc.HasAuthority then
-        local hasAuthority = nil
-        pcall(function() hasAuthority = pc:HasAuthority() end)
-        if hasAuthority == true then return true end
-        if hasAuthority == false then return false end
-    end
-
     return false
 end
 
@@ -261,7 +265,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.5 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.6 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -296,7 +300,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.5 enhanced)...")
+    Log("Fixing local input (v4.6 enhanced)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -797,6 +801,26 @@ RegisterConsoleCommandHandler("mpinfo", function()
         Log("IsServer: " .. tostring(IsServer()))
         Log("IsInGame: " .. tostring(IsInGame()))
 
+        local netDriver = GetNetDriver()
+        if IsValidObject(netDriver) then
+            local serverConn = "nil"
+            pcall(function()
+                if netDriver.ServerConnection then
+                    serverConn = tostring(netDriver.ServerConnection)
+                end
+            end)
+            local clientCount = "nil"
+            pcall(function()
+                if netDriver.ClientConnections then
+                    clientCount = tostring(#netDriver.ClientConnections)
+                end
+            end)
+            Log("NetDriver.ServerConnection: " .. tostring(serverConn))
+            Log("NetDriver.ClientConnections: " .. tostring(clientCount))
+        else
+            Log("NetDriver: nil")
+        end
+
         local pcs = FindAllOf("PlayerController")
         if pcs then
             Log("Controllers: " .. tostring(#pcs))
@@ -986,7 +1010,7 @@ end)
 
 ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v4.5")
+    Log("Initializing MPFix v4.6")
     Log("NetMode: " .. tostring(GetNetMode()))
     Log("IsServer: " .. tostring(IsServer()))
     Log("========================================")
@@ -1006,5 +1030,5 @@ ExecuteWithDelay(Config.InitialDelay, function()
     State.Initialized = true
 end)
 
-print("[MPFix] v4.5 Loaded")
+print("[MPFix] v4.6 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost | F6 = manual fix | ESC = pause menu")
