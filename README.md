@@ -2,7 +2,7 @@
 
 Fixes multiplayer issues in SurrounDead (UE5.3) where joining players spawn as "camera only" with no character control.
 
-## Current Version: v4.3
+## Current Version: v4.4
 
 ## The Problem
 
@@ -24,16 +24,17 @@ Two-component system:
 1. Poll every 3 seconds for PlayerControllers
 2. Skip local controller (host) - only process remote clients
 3. For each remote client without a pawn:
-   a. Try GameMode:RestartPlayer(pc)
-   b. Find unpossessed BP_PlayerCharacter_C and Possess()
-   c. Try pc:ServerRestartPlayer()
+   a. Try SpawnActor(DefaultPawnClass) + Possess()
+   b. Try GameMode:RestartPlayer(pc)
+   c. Find unpossessed BP_PlayerCharacter_C and Possess()
+   d. Try pc:ServerRestartPlayer()
 4. Run SetupPossessedPawn() to configure replication
 5. Teleport underground pawns to valid location
 ```
 
 ### Client-Side Logic (Joining Player)
 ```
-1. Detect when local controller gets a pawn
+1. Detect when local controller gets a pawn (client-safe, no GameMode dependency)
 2. Run FixLocalInput() to enable controls
 3. Set input mode to GameOnly (ESC fallback for menu)
 ```
@@ -44,6 +45,8 @@ pc:EnableInput(pc)
 pc:SetInputModeGameOnly()
 pc:SetIgnoreMoveInput(false)
 pc:SetIgnoreLookInput(false)
+pc:SetPawn(pawn)
+pc:OnRep_Pawn()
 pawn:SetOwner(pc)
 pawn:SetReplicates(true)
 pawn:SetReplicateMovement(true)
@@ -156,7 +159,7 @@ SurrounDead/
       Mods/
         MPFix/
           Scripts/
-            main.lua          # Main fix mod (v4.3)
+            main.lua          # Main fix mod (v4.4)
         BPModLoaderMod/       # Loads .pak mods
         shared/               # Lua libraries
         mods.txt              # Mod enable list
@@ -187,6 +190,12 @@ stat net        # UE network stats
 ```
 
 ## Version History
+
+### v4.4
+- Spawn retry + SpawnActor fallback for stubborn clients
+- Safer server/client detection when pawn is missing
+- Client input fix re-runs when pawn changes
+- UEHelpers PlayerController fallback to avoid "no pawn" deadlock
 
 ### v4.3
 - Safer keybind registration (no hard failure if Keybinds loads late)

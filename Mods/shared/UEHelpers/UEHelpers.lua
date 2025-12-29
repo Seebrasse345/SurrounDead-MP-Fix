@@ -38,11 +38,27 @@ function UEHelpers.GetPlayerController()
     local PlayerControllers = FindAllOf("PlayerController") or FindAllOf("Controller")
     if not PlayerControllers then return Print("No PlayerControllers found\n") end
     for _, Controller in pairs(PlayerControllers or {}) do
-        if Controller.Pawn:IsValid() and Controller.Pawn:IsPlayerControlled() then
+        local pawnValid = false
+        pcall(function()
+            if Controller.Pawn and Controller.Pawn:IsValid() and Controller.Pawn:IsPlayerControlled() then
+                pawnValid = true
+            end
+        end)
+        local isLocal = false
+        pcall(function() isLocal = Controller:IsLocalController() end)
+        if pawnValid or isLocal then
             PlayerController = Controller
             break
         -- else
         --     print("Not valid or not player controlled\n")
+        end
+    end
+    if not (PlayerController and PlayerController:IsValid()) then
+        for _, Controller in pairs(PlayerControllers or {}) do
+            if Controller and Controller.IsValid and Controller:IsValid() then
+                PlayerController = Controller
+                break
+            end
         end
     end
     if PlayerController and PlayerController:IsValid() then
