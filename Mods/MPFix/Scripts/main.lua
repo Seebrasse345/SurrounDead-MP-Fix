@@ -1,25 +1,35 @@
--- MPFix v3.3 - Ultra defensive, wrapped in pcall everywhere
+-- MPFix v4.0 - Rewritten based on C++ ModActor implementation
+-- Focuses on server-side spawn fix with proper safety checks
+
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v3.7 - SpawnDefaultPawnAtTransform")
+print("[MPFix] Loading v4.0 - Server-Side Spawn Fix")
 print("[MPFix] ========================================")
 
-local State = {
-    LastAttempt = 0,
-    Cooldown = 2.0,
-    Tried = {},
-    SpawnAttempts = {},
-    LastControllerCount = 0,
-    InGame = false
+-- Configuration
+local Config = {
+    CheckInterval = 3000,      -- ms between checks
+    InitialDelay = 5000,       -- ms before first check
+    UndergroundZ = -500,       -- Z threshold for underground detection
+    SpawnOffsetX = 300,        -- X offset from reference spawn
+    SpawnOffsetZ = 100,        -- Z offset (above ground)
 }
+
+-- State tracking
+local State = {
+    Initialized = false,
+    ControllerCount = -1,      -- -1 = not yet counted (prevents false "new player" on first run)
+    ProcessedControllers = {}, -- Track which controllers we've tried to fix
+    CharacterClass = nil,      -- Cached character class
+}
+
+-- ============================================
+-- UTILITY FUNCTIONS
+-- ============================================
 
 local function Log(msg)
     print("[MPFix] " .. tostring(msg))
-end
-
-local function LogEvent(event, details)
-    print("[MPFix][" .. event .. "] " .. tostring(details))
 end
 
 local function SafeCall(name, fn)
@@ -27,315 +37,325 @@ local function SafeCall(name, fn)
     if not ok then
         Log("ERROR in " .. name .. ": " .. tostring(err))
     end
-    return ok
+    return ok, err
 end
 
-local function IsValid(obj)
+local function IsValidObject(obj)
     if not obj then return false end
-    local ok, valid = pcall(function()
-        if obj.IsValid then return obj:IsValid() end
-        return false
-    end)
-    return ok and valid
-end
-
-local function IsServer()
     local ok, result = pcall(function()
-        local gm = FindFirstOf("GameModeBase")
-        return IsValid(gm)
+        return obj:IsValid()
     end)
     return ok and result
 end
 
-local function IsInGame()
-    local ok, result = pcall(function()
-        -- Check if we're actually in a game (not main menu)
-        local world = FindFirstOf("World")
-        if not IsValid(world) then return false end
-
-        local gm = FindFirstOf("GameModeBase")
-        if not IsValid(gm) then return false end
-
-        return true
-    end)
-    return ok and result
-end
-
-local function GetLocalPC()
-    local result = nil
+local function GetNetMode()
+    -- Returns: 0=Standalone, 1=DedicatedServer, 2=ListenServer, 3=Client
+    local result = 0
     pcall(function()
-        local pcs = FindAllOf("PlayerController")
-        if pcs then
-            for _, pc in ipairs(pcs) do
-                local ok, isLocal = pcall(function() return pc:IsLocalController() end)
-                if ok and isLocal then
-                    result = pc
-                    return
-                end
-            end
+        local world = UEHelpers.GetWorld()
+        if world and world.GetNetMode then
+            result = world:GetNetMode()
         end
     end)
     return result
 end
 
-local function GetSpawnLocation()
-    local loc = { X = 0, Y = 0, Z = 5000 }
+local function IsServer()
+    local netMode = GetNetMode()
+    -- Server = DedicatedServer(1) or ListenServer(2) or Standalone(0)
+    return netMode ~= 3
+end
 
+local function IsInGame()
+    local result = false
     pcall(function()
-        local chars = FindAllOf("BP_PlayerCharacter_C")
-        if chars then
-            for _, c in ipairs(chars) do
-                local ok, charLoc = pcall(function() return c:K2_GetActorLocation() end)
-                if ok and charLoc and charLoc.Z > -500 then
-                    loc = { X = charLoc.X + 300, Y = charLoc.Y, Z = charLoc.Z + 100 }
+        local gm = FindFirstOf("GameModeBase")
+        result = IsValidObject(gm)
+    end)
+    return result
+end
+
+-- ============================================
+-- SPAWN LOCATION
+-- ============================================
+
+local function GetValidSpawnLocation()
+    local spawnLoc = { X = 0, Y = 0, Z = 5000 } -- Fallback high spawn
+
+    -- Method 1: Try PlayerStart
+    pcall(function()
+        local starts = FindAllOf("PlayerStart")
+        if starts and #starts > 0 then
+            local start = starts[1]
+            if IsValidObject(start) then
+                local loc = start:K2_GetActorLocation()
+                if loc and loc.Z > Config.UndergroundZ then
+                    spawnLoc = { X = loc.X + Config.SpawnOffsetX, Y = loc.Y, Z = loc.Z + Config.SpawnOffsetZ }
                     return
                 end
             end
         end
     end)
 
-    return loc
-end
-
-local function GetPlayerName(pc)
-    local name = "Unknown"
-    pcall(function()
-        if pc and pc.PlayerState then
-            local ps = pc.PlayerState
-            if ps and ps.GetPlayerName then
-                local fstring = ps:GetPlayerName()
-                -- FString needs :ToString() conversion
-                if fstring then
-                    if type(fstring) == "string" then
-                        name = fstring
-                    elseif fstring.ToString then
-                        name = fstring:ToString()
-                    else
-                        name = tostring(fstring)
+    -- Method 2: Find existing character above ground
+    if spawnLoc.Z > 4000 then -- Still using fallback
+        pcall(function()
+            local chars = FindAllOf("Character")
+            if chars then
+                for _, char in ipairs(chars) do
+                    if IsValidObject(char) then
+                        local loc = char:K2_GetActorLocation()
+                        if loc and loc.Z > Config.UndergroundZ then
+                            spawnLoc = { X = loc.X + Config.SpawnOffsetX, Y = loc.Y, Z = loc.Z + Config.SpawnOffsetZ }
+                            return
+                        end
                     end
                 end
             end
-        end
-    end)
-    return name
+        end)
+    end
+
+    return spawnLoc
 end
 
-local function TrySpawnForController(pc)
-    if not IsValid(pc) then return end
+-- ============================================
+-- CHARACTER CLASS LOADING
+-- ============================================
 
-    local playerName = GetPlayerName(pc)
-    LogEvent("SPAWN", "Attempting spawn for: " .. tostring(playerName))
+local function GetCharacterClass()
+    if State.CharacterClass and IsValidObject(State.CharacterClass) then
+        return State.CharacterClass
+    end
 
-    local spawnLoc = GetSpawnLocation()
-
-    -- Method 1: RestartPlayer
+    -- Try to find existing BP_PlayerCharacter and get its class
     pcall(function()
-        local gm = FindFirstOf("GameModeBase")
-        if gm and gm.RestartPlayer then
-            gm:RestartPlayer(pc)
-            Log("RestartPlayer called")
-        end
-    end)
-
-    -- Method 2: ServerRestartPlayer
-    pcall(function()
-        if pc.ServerRestartPlayer then
-            pc:ServerRestartPlayer()
-            Log("ServerRestartPlayer called")
-        end
-    end)
-
-    -- Method 3: Try SpawnDefaultPawnAtTransform
-    pcall(function()
-        Log("Trying SpawnDefaultPawnAtTransform...")
-        local gm = FindFirstOf("GameModeBase")
-        if gm and gm.SpawnDefaultPawnAtTransform then
-            local transform = {}
-            transform.Translation = spawnLoc
-            transform.Rotation = { Pitch = 0, Yaw = 0, Roll = 0, W = 1, X = 0, Y = 0, Z = 0 }
-            transform.Scale3D = { X = 1, Y = 1, Z = 1 }
-
-            local newPawn = gm:SpawnDefaultPawnAtTransform(pc, transform)
-            if IsValid(newPawn) then
-                Log("SpawnDefaultPawnAtTransform SUCCESS!")
-                pc:Possess(newPawn)
-                Log("Possessed new pawn")
-            else
-                Log("SpawnDefaultPawnAtTransform returned nil")
-            end
-        else
-            Log("No SpawnDefaultPawnAtTransform available")
-        end
-    end)
-
-    -- Method 3b: Try K2_SpawnActor
-    pcall(function()
-        Log("Trying K2_SpawnActor...")
-        local existingChar = FindFirstOf("BP_PlayerCharacter_C")
-        if existingChar then
-            local charClass = existingChar:GetClass()
-            if charClass then
-                Log("Found character class: " .. tostring(charClass:GetFullName()))
-
-                local world = FindFirstOf("World")
-                if world and world.SpawnActor then
-                    local transform = {}
-                    transform.Translation = spawnLoc
-                    transform.Rotation = { Pitch = 0, Yaw = 0, Roll = 0 }
-                    transform.Scale3D = { X = 1, Y = 1, Z = 1 }
-
-                    local newActor = world:SpawnActor(charClass, transform)
-                    if IsValid(newActor) then
-                        Log("SpawnActor SUCCESS!")
-                        newActor:SetOwner(pc)
-                        pc:Possess(newActor)
-                        Log("Possessed spawned actor")
-                    end
-                end
+        local char = FindFirstOf("BP_PlayerCharacter_C")
+        if IsValidObject(char) then
+            State.CharacterClass = char:GetClass()
+            if State.CharacterClass then
+                Log("Cached character class: " .. tostring(State.CharacterClass:GetFullName()))
             end
         end
     end)
 
-    -- Method 4: Try ClientRestart
+    -- Fallback: Try GameMode's DefaultPawnClass
+    if not State.CharacterClass then
+        pcall(function()
+            local gm = FindFirstOf("GameModeBase")
+            if IsValidObject(gm) and gm.DefaultPawnClass then
+                State.CharacterClass = gm.DefaultPawnClass
+                Log("Using GameMode DefaultPawnClass")
+            end
+        end)
+    end
+
+    return State.CharacterClass
+end
+
+-- ============================================
+-- SPAWN AND POSSESSION
+-- ============================================
+
+local function SetupPossessedPawn(pc, pawn)
+    if not IsValidObject(pc) or not IsValidObject(pawn) then return end
+
+    Log("Setting up possessed pawn...")
+
+    -- Enable input
+    pcall(function()
+        if pc.EnableInput then
+            pc:EnableInput(pc)
+        end
+    end)
+
+    -- Set input mode to game only
+    pcall(function()
+        if pc.SetInputModeGameOnly then
+            pc:SetInputModeGameOnly()
+        end
+    end)
+
+    -- Disable move/look input ignore
+    pcall(function()
+        if pc.SetIgnoreMoveInput then
+            pc:SetIgnoreMoveInput(false)
+        end
+        if pc.SetIgnoreLookInput then
+            pc:SetIgnoreLookInput(false)
+        end
+    end)
+
+    -- Set ownership for replication
+    pcall(function()
+        if pawn.SetOwner then
+            pawn:SetOwner(pc)
+        end
+    end)
+
+    -- Enable replication
+    pcall(function()
+        if pawn.SetReplicates then
+            pawn:SetReplicates(true)
+        end
+        if pawn.SetReplicateMovement then
+            pawn:SetReplicateMovement(true)
+        end
+    end)
+
+    -- Force network update
+    pcall(function()
+        if pawn.ForceNetUpdate then
+            pawn:ForceNetUpdate()
+        end
+    end)
+
+    -- Set autonomous proxy for client authority
+    pcall(function()
+        if pawn.SetAutonomousProxy then
+            pawn:SetAutonomousProxy(true)
+        end
+    end)
+
+    -- Enable movement
+    pcall(function()
+        local movement = pawn.CharacterMovement
+        if movement and movement.SetMovementMode then
+            movement:SetMovementMode(1) -- Walking
+        end
+    end)
+
+    -- Call replication notify functions
+    pcall(function()
+        if pawn.OnRep_Controller then
+            pawn:OnRep_Controller()
+        end
+    end)
+
+    pcall(function()
+        if pawn.OnRep_PlayerState then
+            pawn:OnRep_PlayerState()
+        end
+    end)
+
+    -- Acknowledge possession
+    pcall(function()
+        if pc.AcknowledgePossession then
+            pc:AcknowledgePossession(pawn)
+        end
+    end)
+
+    -- Client restart to finalize
     pcall(function()
         if pc.ClientRestart then
-            Log("Trying ClientRestart...")
-            local starts = FindAllOf("PlayerStart")
-            if starts and #starts > 0 then
-                pc:ClientRestart(starts[1])
-                Log("ClientRestart called")
-            end
+            pc:ClientRestart(pawn)
         end
     end)
 
-    -- Method 5: Find unpossessed character and possess it
+    Log("Pawn setup complete")
+end
+
+local function SpawnPawnForController(pc)
+    if not IsValidObject(pc) then
+        Log("SpawnPawnForController: Invalid controller")
+        return false
+    end
+
+    Log("Attempting to spawn pawn for remote client...")
+
+    local spawnLoc = GetValidSpawnLocation()
+    Log("Spawn location: X=" .. tostring(spawnLoc.X) .. " Y=" .. tostring(spawnLoc.Y) .. " Z=" .. tostring(spawnLoc.Z))
+
+    -- Method 1: Try GameMode RestartPlayer (simplest, most reliable if it works)
+    local success = false
     pcall(function()
-        Log("Looking for unpossessed characters...")
-        local chars = FindAllOf("BP_PlayerCharacter_C")
-        if chars then
-            Log("Found " .. #chars .. " characters")
-            for i, char in ipairs(chars) do
-                local controller = nil
-                pcall(function() controller = char.Controller end)
-                if not IsValid(controller) then
-                    Log("Character " .. i .. " has no controller - trying to possess")
+        local gm = FindFirstOf("GameModeBase")
+        if IsValidObject(gm) and gm.RestartPlayer then
+            Log("Trying RestartPlayer...")
+            gm:RestartPlayer(pc)
 
-                    -- Possess the character
-                    pcall(function()
-                        pc:Possess(char)
-                        Log("Possess called!")
-                    end)
+            -- Check if it worked
+            ExecuteWithDelay(500, function()
+                if IsValidObject(pc) and IsValidObject(pc.Pawn) then
+                    Log("RestartPlayer SUCCESS!")
+                    SetupPossessedPawn(pc, pc.Pawn)
+                    success = true
+                end
+            end)
+        end
+    end)
 
-                    -- Move the character to spawn location
-                    pcall(function()
-                        char:K2_SetActorLocation(spawnLoc, false, {}, true)
-                        Log("Moved character to spawn")
-                    end)
+    -- Method 2: Find unpossessed character and possess it
+    if not success then
+        pcall(function()
+            Log("Looking for unpossessed characters...")
+            local chars = FindAllOf("BP_PlayerCharacter_C")
+            if chars then
+                for _, char in ipairs(chars) do
+                    if IsValidObject(char) then
+                        local controller = char.Controller
+                        if not IsValidObject(controller) then
+                            Log("Found unpossessed character - possessing...")
 
-                    -- Enable input on controller
-                    pcall(function()
-                        pc:EnableInput(pc)
-                        Log("EnableInput called")
-                    end)
+                            -- Move to spawn location first
+                            pcall(function()
+                                char:K2_SetActorLocation(spawnLoc, false, nil, true)
+                            end)
 
-                    -- Set replication
-                    pcall(function()
-                        if char.SetReplicates then
-                            char:SetReplicates(true)
-                            Log("SetReplicates(true) called")
+                            -- Possess
+                            pcall(function()
+                                pc:Possess(char)
+                            end)
+
+                            -- Setup
+                            SetupPossessedPawn(pc, char)
+                            success = true
+                            return
                         end
-                    end)
-
-                    -- Try to enable movement
-                    pcall(function()
-                        local movement = char.CharacterMovement
-                        if movement then
-                            movement:SetMovementMode(1) -- Walking
-                            Log("SetMovementMode called")
-                        end
-                    end)
-
-                    -- Client restart to init properly
-                    pcall(function()
-                        if pc.ClientRestart then
-                            pc:ClientRestart(char)
-                            Log("ClientRestart with pawn called")
-                        end
-                    end)
-
-                    -- Acknowledge possession
-                    pcall(function()
-                        if pc.AcknowledgePossession then
-                            pc:AcknowledgePossession(char)
-                            Log("AcknowledgePossession called")
-                        end
-                    end)
-
-                    -- Set owner for replication
-                    pcall(function()
-                        if char.SetOwner then
-                            char:SetOwner(pc)
-                            Log("SetOwner called")
-                        end
-                    end)
-
-                    -- Force net update
-                    pcall(function()
-                        if char.ForceNetUpdate then
-                            char:ForceNetUpdate()
-                            Log("ForceNetUpdate called")
-                        end
-                    end)
-
-                    -- Set autonomous proxy (client authority)
-                    pcall(function()
-                        if char.SetAutonomousProxy then
-                            char:SetAutonomousProxy(true)
-                            Log("SetAutonomousProxy called")
-                        end
-                    end)
-
-                    -- Try OnRep functions
-                    pcall(function()
-                        if char.OnRep_Controller then
-                            char:OnRep_Controller()
-                            Log("OnRep_Controller called")
-                        end
-                    end)
-
-                    pcall(function()
-                        if char.OnRep_PlayerState then
-                            char:OnRep_PlayerState()
-                            Log("OnRep_PlayerState called")
-                        end
-                    end)
-
-                    -- Restart the player properly via GameMode
-                    pcall(function()
-                        local gm = FindFirstOf("GameModeBase")
-                        if gm and gm.RestartPlayerAtPlayerStart then
-                            local starts = FindAllOf("PlayerStart")
-                            if starts and #starts > 0 then
-                                gm:RestartPlayerAtPlayerStart(pc, starts[1])
-                                Log("RestartPlayerAtPlayerStart called")
-                            end
-                        end
-                    end)
-
-                    break
+                    end
                 end
             end
-        end
+        end)
+    end
+
+    -- Method 3: Try ServerRestartPlayer
+    if not success then
+        pcall(function()
+            if pc.ServerRestartPlayer then
+                Log("Trying ServerRestartPlayer...")
+                pc:ServerRestartPlayer()
+            end
+        end)
+    end
+
+    return success
+end
+
+local function TeleportUndergroundPawn(pawn)
+    if not IsValidObject(pawn) then return end
+
+    local spawnLoc = GetValidSpawnLocation()
+
+    pcall(function()
+        local oldLoc = pawn:K2_GetActorLocation()
+        Log("Teleporting pawn from Z=" .. tostring(oldLoc.Z) .. " to Z=" .. tostring(spawnLoc.Z))
+        pawn:K2_SetActorLocation(spawnLoc, false, nil, true)
     end)
 end
 
-local function CheckControllers()
-    -- Early exit if not in game
-    if not IsInGame() then
+-- ============================================
+-- MAIN CHECK FUNCTION
+-- ============================================
+
+local function CheckForPawnlessPlayers()
+    -- Only run on server
+    if not IsServer() then
         return
     end
 
-    Log("CheckControllers starting...")
+    -- Only run if in game
+    if not IsInGame() then
+        return
+    end
 
     local pcs = nil
     local ok = pcall(function()
@@ -343,70 +363,70 @@ local function CheckControllers()
     end)
 
     if not ok or not pcs then
-        Log("Failed to get PlayerControllers")
         return
     end
 
-    local count = 0
-    pcall(function() count = #pcs end)
+    local count = #pcs
 
-    Log("Found " .. tostring(count) .. " controllers")
+    -- First run initialization
+    if State.ControllerCount == -1 then
+        State.ControllerCount = count
+        Log("Initial controller count: " .. tostring(count))
+        return -- Don't process on first run
+    end
 
     -- Detect new players
-    if count > State.LastControllerCount then
-        Log("New player detected!")
-        State.Tried = {}
+    if count > State.ControllerCount then
+        Log("New player joined! Controllers: " .. tostring(State.ControllerCount) .. " -> " .. tostring(count))
+        -- Clear processed list for new players
+        State.ProcessedControllers = {}
     end
-    State.LastControllerCount = count
+    State.ControllerCount = count
 
     -- Check each controller
-    for i = 1, count do
-        SafeCall("CheckController" .. i, function()
-            local pc = pcs[i]
-            if not IsValid(pc) then
-                Log("Controller " .. i .. " invalid")
-                return
-            end
-
-            local playerName = GetPlayerName(pc)
-            local hasPawn = false
+    for i, pc in ipairs(pcs) do
+        if IsValidObject(pc) then
+            -- Skip local controller (host)
             local isLocal = false
-
-            pcall(function()
-                hasPawn = pc.Pawn and IsValid(pc.Pawn)
-            end)
             pcall(function()
                 isLocal = pc:IsLocalController()
             end)
 
-            Log("  " .. i .. ": " .. tostring(playerName) .. " Local=" .. tostring(isLocal) .. " Pawn=" .. tostring(hasPawn))
+            if not isLocal then
+                -- This is a remote client
+                local pawn = nil
+                pcall(function()
+                    pawn = pc:GetPawn()
+                end)
 
-            -- Remote player without pawn - try to spawn
-            if not hasPawn and not isLocal then
-                local pcKey = tostring(i)
-                if not State.Tried[pcKey] then
-                    State.Tried[pcKey] = true
-                    Log("Remote player needs pawn!")
-                    TrySpawnForController(pc)
+                local pcKey = tostring(pc:GetAddress())
+
+                if not IsValidObject(pawn) then
+                    -- No pawn - spawn one
+                    if not State.ProcessedControllers[pcKey] then
+                        State.ProcessedControllers[pcKey] = true
+                        Log("Remote client #" .. tostring(i) .. " has no pawn - spawning...")
+                        SpawnPawnForController(pc)
+                    end
+                else
+                    -- Has pawn - check if underground
+                    pcall(function()
+                        local loc = pawn:K2_GetActorLocation()
+                        if loc and loc.Z < Config.UndergroundZ then
+                            Log("Remote client #" .. tostring(i) .. " is underground (Z=" .. tostring(loc.Z) .. ")")
+                            TeleportUndergroundPawn(pawn)
+                        end
+                    end)
+
+                    -- Ensure pawn is properly set up
+                    if not State.ProcessedControllers[pcKey .. "_setup"] then
+                        State.ProcessedControllers[pcKey .. "_setup"] = true
+                        SetupPossessedPawn(pc, pawn)
+                    end
                 end
             end
-
-            -- Check if player is underground
-            if hasPawn then
-                pcall(function()
-                    local pawnLoc = pc.Pawn:K2_GetActorLocation()
-                    if pawnLoc.Z < -500 then
-                        Log("Player underground at Z=" .. tostring(pawnLoc.Z))
-                        local spawnLoc = GetSpawnLocation()
-                        pc.Pawn:K2_SetActorLocation(spawnLoc, false, {}, true)
-                        Log("Teleported to Z=" .. tostring(spawnLoc.Z))
-                    end
-                end)
-            end
-        end)
+        end
     end
-
-    Log("CheckControllers done")
 end
 
 -- ============================================
@@ -414,73 +434,78 @@ end
 -- ============================================
 
 RegisterKeyBind(Key.F6, function()
-    Log("F6 pressed")
-    State.Tried = {}
-    SafeCall("F6_Check", CheckControllers)
+    Log("F6 pressed - manual check")
+    State.ProcessedControllers = {}
+    SafeCall("F6_Check", CheckForPawnlessPlayers)
 end)
 
 RegisterConsoleCommandHandler("mpfix", function()
-    Log("mpfix command")
-    State.Tried = {}
-    SafeCall("mpfix_Check", CheckControllers)
+    Log("mpfix command - forcing spawn check")
+    State.ProcessedControllers = {}
+    SafeCall("mpfix_Check", CheckForPawnlessPlayers)
     return true
 end)
 
 RegisterConsoleCommandHandler("mpinfo", function()
     Log("========== MP INFO ==========")
-
     SafeCall("mpinfo", function()
+        Log("NetMode: " .. tostring(GetNetMode()) .. " (0=Standalone, 1=Dedicated, 2=Listen, 3=Client)")
         Log("IsServer: " .. tostring(IsServer()))
         Log("IsInGame: " .. tostring(IsInGame()))
+        Log("ControllerCount: " .. tostring(State.ControllerCount))
 
         local gm = FindFirstOf("GameModeBase")
         if gm then
-            local gmName = "?"
-            pcall(function() gmName = gm:GetFullName() end)
-            Log("GameMode: " .. gmName)
-        else
-            Log("GameMode: NOT FOUND")
+            Log("GameMode: " .. tostring(gm:GetFullName()))
         end
 
         local pcs = FindAllOf("PlayerController")
         if pcs then
-            Log("Controllers: " .. #pcs)
+            Log("Controllers found: " .. tostring(#pcs))
+            for i, pc in ipairs(pcs) do
+                if IsValidObject(pc) then
+                    local isLocal = pcall(function() return pc:IsLocalController() end) and pc:IsLocalController()
+                    local hasPawn = IsValidObject(pc.Pawn)
+                    Log("  #" .. i .. ": Local=" .. tostring(isLocal) .. " HasPawn=" .. tostring(hasPawn))
+                end
+            end
         end
 
         local chars = FindAllOf("BP_PlayerCharacter_C")
-        Log("Characters: " .. tostring(chars and #chars or 0))
+        Log("BP_PlayerCharacter_C count: " .. tostring(chars and #chars or 0))
     end)
-
     Log("=============================")
     return true
 end)
 
 RegisterConsoleCommandHandler("tphost", function()
     SafeCall("tphost", function()
-        -- Get host's pawn location
-        local pc = GetLocalPC()
-        if not pc then
-            Log("No local PC")
-            return
+        local localPC = nil
+        local pcs = FindAllOf("PlayerController")
+        if pcs then
+            for _, pc in ipairs(pcs) do
+                if IsValidObject(pc) and pc:IsLocalController() then
+                    localPC = pc
+                    break
+                end
+            end
         end
 
-        local hostPawn = pc.Pawn
-        if not IsValid(hostPawn) then
+        if not localPC or not IsValidObject(localPC.Pawn) then
             Log("Host has no pawn")
             return
         end
 
-        local hostLoc = hostPawn:K2_GetActorLocation()
+        local hostLoc = localPC.Pawn:K2_GetActorLocation()
         Log("Host location: " .. tostring(hostLoc.X) .. "," .. tostring(hostLoc.Y) .. "," .. tostring(hostLoc.Z))
 
-        -- Teleport all other characters TO the host
         local chars = FindAllOf("BP_PlayerCharacter_C")
         if chars then
             local offset = 200
             for _, c in ipairs(chars) do
-                if c ~= hostPawn then
+                if c ~= localPC.Pawn and IsValidObject(c) then
                     local newLoc = { X = hostLoc.X + offset, Y = hostLoc.Y, Z = hostLoc.Z + 50 }
-                    c:K2_SetActorLocation(newLoc, false, {}, true)
+                    c:K2_SetActorLocation(newLoc, false, nil, true)
                     Log("Teleported player to host")
                     offset = offset + 200
                 end
@@ -491,33 +516,28 @@ RegisterConsoleCommandHandler("tphost", function()
 end)
 
 -- ============================================
--- PERIODIC CHECK
--- ============================================
-
-local function StartPeriodicCheck()
-    Log("Starting periodic check (every 3s)")
-
-    LoopAsync(3000, function()
-        SafeCall("PeriodicCheck", function()
-            if IsInGame() then
-                CheckControllers()
-            end
-        end)
-        return false -- keep looping
-    end)
-end
-
--- ============================================
 -- INITIALIZATION
 -- ============================================
 
-ExecuteWithDelay(5000, function()
+ExecuteWithDelay(Config.InitialDelay, function()
     Log("========================================")
-    Log("Initializing MPFix v3.3")
+    Log("Initializing MPFix v4.0")
+    Log("NetMode: " .. tostring(GetNetMode()))
+    Log("IsServer: " .. tostring(IsServer()))
     Log("========================================")
 
-    StartPeriodicCheck()
+    -- Pre-cache character class
+    GetCharacterClass()
+
+    -- Start periodic check
+    Log("Starting periodic check (every " .. tostring(Config.CheckInterval) .. "ms)")
+    LoopAsync(Config.CheckInterval, function()
+        SafeCall("PeriodicCheck", CheckForPawnlessPlayers)
+        return false -- keep looping
+    end)
+
+    State.Initialized = true
 end)
 
-print("[MPFix] v3.3 Loaded")
+print("[MPFix] v4.0 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, tphost | F6 = manual fix")
