@@ -2,7 +2,7 @@
 setlocal
 
 echo ==========================================
-echo  SurrounDead MP Fix Installer
+echo  SurrounDead MP Fix Installer (v4.4)
 echo  Installs UE4SS + MPFix mod
 echo ==========================================
 echo.
@@ -64,9 +64,13 @@ echo  Installation Complete!
 echo ==========================================
 echo.
 echo Commands in-game (press ~ for console):
-echo   mpfix   - Force spawn fix for stuck players
-echo   mpinfo  - Show MP debug info
-echo   tphost  - Teleport all players to host
-echo   F6      - Manual spawn fix hotkey
+echo   mpfix    - Force spawn check + input fix
+echo   mpinput  - Fix local input only
+echo   mpinfo   - Show MP debug info
+echo   mpdebug  - Dump local controller/pawn status
+echo   mpmove   - Test local pawn movement
+echo   tphost   - Teleport all players to host
+echo   F6       - Manual spawn fix hotkey
+echo   ESC      - Pause menu fallback
 echo.
 pause
