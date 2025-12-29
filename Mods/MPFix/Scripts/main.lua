@@ -1,17 +1,18 @@
--- MPFix v4.7 - Server spawn fix + Enhanced client input fix
+-- MPFix v4.8 - Server spawn fix + Enhanced client input fix (crash fixes)
 local UEHelpers = require("UEHelpers")
 
 print("[MPFix] ========================================")
-print("[MPFix] Loading v4.7 - Server + Enhanced Client Fix")
+print("[MPFix] Loading v4.8 - Server + Enhanced Client Fix")
 print("[MPFix] ========================================")
 
 local Config = {
     CheckInterval = 3000,
-    InitialDelay = 5000,
+    InitialDelay = 8000,  -- Increased for game stability
     UndergroundZ = -500,
     SpawnOffsetX = 300,
     SpawnOffsetZ = 100,
     SpawnRetryInterval = 3000,
+    WarmupChecks = 2,  -- Skip first N checks
 }
 
 local State = {
@@ -20,6 +21,7 @@ local State = {
     ProcessedControllers = {},
     CharacterClass = nil,
     LastSpawnAttempt = {},
+    CheckCount = 0,
 }
 
 local function Log(msg)
@@ -250,7 +252,7 @@ local function GetCharacterClass()
 end
 
 -- ============================================
--- CLIENT-SIDE INPUT FIX (v4.7 Enhanced)
+-- CLIENT-SIDE INPUT FIX (v4.8 Enhanced)
 -- ============================================
 
 local function SetupEnhancedInput(pc, pawn)
@@ -285,7 +287,7 @@ local function SetupEnhancedInput(pc, pawn)
 end
 
 local function FixLocalInput()
-    Log("Fixing local input (v4.7 enhanced)...")
+    Log("Fixing local input (v4.8 enhanced)...")
 
     pcall(function()
         local pc = GetLocalPlayerController()
@@ -1034,27 +1036,45 @@ end)
 -- ============================================
 
 ExecuteWithDelay(Config.InitialDelay, function()
-    Log("========================================")
-    Log("Initializing MPFix v4.7")
-    local netMode = GetNetMode()
-    local isServer = IsServer()
-    Log("NetMode: " .. tostring(netMode ~= nil and netMode or "unknown"))
-    Log("IsServer: " .. tostring(isServer ~= nil and isServer or "unknown"))
-    Log("========================================")
+    SafeCall("Init", function()
+        Log("========================================")
+        Log("Initializing MPFix v4.8")
 
-    Log("Starting periodic check (every " .. tostring(Config.CheckInterval) .. "ms)")
-    LoopAsync(Config.CheckInterval, function()
-        local isServer = IsServer()
-        if isServer == true then
-            SafeCall("ServerCheck", CheckForPawnlessPlayers)
-        elseif isServer == false then
-            SafeCall("ClientCheck", CheckClientInput)
-        end
-        return false
+        -- Safe info logging - wrapped to prevent crash
+        local netMode = nil
+        local isServer = nil
+        SafeCall("GetNetMode", function() netMode = GetNetMode() end)
+        SafeCall("IsServer", function() isServer = IsServer() end)
+
+        Log("NetMode: " .. tostring(netMode ~= nil and netMode or "unknown"))
+        Log("IsServer: " .. tostring(isServer ~= nil and isServer or "unknown"))
+        Log("========================================")
+
+        Log("Starting periodic check (every " .. tostring(Config.CheckInterval) .. "ms)")
+        LoopAsync(Config.CheckInterval, function()
+            State.CheckCount = State.CheckCount + 1
+
+            -- Warmup period - skip first few checks to let game stabilize
+            if State.CheckCount <= Config.WarmupChecks then
+                Log("Warmup check " .. tostring(State.CheckCount) .. "/" .. tostring(Config.WarmupChecks))
+                return false
+            end
+
+            -- Safe periodic check with error handling
+            local isServer = nil
+            SafeCall("PeriodicIsServer", function() isServer = IsServer() end)
+
+            if isServer == true then
+                SafeCall("ServerCheck", CheckForPawnlessPlayers)
+            elseif isServer == false then
+                SafeCall("ClientCheck", CheckClientInput)
+            end
+            return false
+        end)
+
+        State.Initialized = true
     end)
-
-    State.Initialized = true
 end)
 
-print("[MPFix] v4.7 Loaded")
+print("[MPFix] v4.8 Loaded")
 print("[MPFix] Commands: mpfix, mpinfo, mpinput, mpdebug, mpmove, tphost | F6 = manual fix | ESC = pause menu")
