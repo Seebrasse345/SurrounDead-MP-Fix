@@ -42,10 +42,15 @@ end
 
 local function GetNetMode()
     local result = 0
-    pcall(function()
-        local world = UEHelpers.GetWorld()
-        if world and world.GetNetMode then
-            result = world:GetNetMode()
+    local ok = pcall(function()
+        local world = nil
+        pcall(function() world = UEHelpers.GetWorld() end)
+        if world then
+            local valid = false
+            pcall(function() valid = world:IsValid() end)
+            if valid and world.GetNetMode then
+                result = world:GetNetMode()
+            end
         end
     end)
     return result
@@ -57,9 +62,12 @@ end
 
 local function IsInGame()
     local result = false
-    pcall(function()
-        local gm = FindFirstOf("GameModeBase")
-        result = IsValidObject(gm)
+    local ok = pcall(function()
+        local gm = nil
+        pcall(function() gm = FindFirstOf("GameModeBase") end)
+        if gm then
+            pcall(function() result = gm:IsValid() end)
+        end
     end)
     return result
 end
